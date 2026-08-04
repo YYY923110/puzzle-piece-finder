@@ -70,6 +70,11 @@ PADDLE_MODEL_SOURCE: str = "bos"
 # oneDNN(MKLDNN) 加速。**必须保持 False**：paddle 3.3.1 开着它跑 PP-OCR 检测
 # 模型会抛 ConvertPirAttribute2RuntimeAttribute 未实现。详见 recognize.py。
 PADDLE_ENABLE_MKLDNN: bool = False
+# 按行识别（跳过检测模型）用的 rec 模型名。**必须与 PaddleOCR 主管线实际
+# 选用的一致**，否则按行识别的读数会与 Pass A 系统性不一致。
+# 本机 paddleocr 3.7.0 实测主管线加载的是 PP-OCRv6_medium_rec。
+# 换 PaddleOCR 版本后先跑 scripts/probe_paddleocr.py 确认这个名字还对。
+PADDLE_REC_MODEL_NAME: str = "PP-OCRv6_medium_rec"
 
 # ---------- 渲染 ----------
 # 非目标区域的亮度系数。0.0 全黑，1.0 不变。保留空间定位参照

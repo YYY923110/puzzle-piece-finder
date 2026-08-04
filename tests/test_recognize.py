@@ -395,3 +395,32 @@ class TestPaddleBackendIntegration:
         backend = recognize.PaddleBackend()
         result = recognize.recognize_direct(backend, image)
         assert result.code == "B-403"
+
+    def test_read_line_reads_an_already_upright_line(self):
+        import cv2
+
+        line = np.full((60, 300, 3), 245, dtype=np.uint8)
+        cv2.putText(
+            line, "B-403", (20, 45), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (90, 90, 90), 3
+        )
+        backend = recognize.PaddleBackend()
+        detection = backend.read_line(line)
+        assert detection.text.replace(" ", "") == "B-403"
+        assert detection.score > 0.5
+
+    def test_paddle_backend_satisfies_the_optional_line_protocol(self):
+        backend = recognize.PaddleBackend()
+        assert isinstance(backend, recognize.LineOcrBackend)
+
+    def test_full_read_carries_the_detection_quad(self):
+        import cv2
+
+        image = np.full((160, 480, 3), 245, dtype=np.uint8)
+        cv2.putText(
+            image, "B-403", (40, 110), cv2.FONT_HERSHEY_SIMPLEX, 3.0, (90, 90, 90), 6
+        )
+        backend = recognize.PaddleBackend()
+        detections = backend.read(image)
+        assert detections
+        assert detections[0].poly is not None
+        assert len(detections[0].poly) == 4

@@ -82,11 +82,17 @@ def prepare_paddle_env() -> None:
 
 
 class PaddleBackend:
-    """PaddleOCR 3.x 后端。模型惰性加载——首次 read 时才初始化。"""
+    """PaddleOCR 3.x 后端。模型惰性加载——首次 read 时才初始化。
+
+    同时实现可选的 LineOcrBackend：单独持有一个 rec 模型，用于跳过检测
+    直接识别已摆正的文字行。
+    """
 
     def __init__(self, lang: str = "en") -> None:
         self._lang = lang
         self._ocr = None
+        self._rec = None
+        self._rec_unavailable = False
 
     def _ensure_loaded(self) -> None:
         if self._ocr is None:
@@ -125,6 +131,51 @@ class PaddleBackend:
         for res in results:
             detections.extend(_extract(res))
         return detections
+
+    def _ensure_rec_loaded(self) -> None:
+        """惰性加载单独的 rec 模型。加载失败就永久标记不可用。
+
+        故意不让它抛出去：按行识别是纯提速特性，模型名对不上时应当安静地
+        降级回全量角度穷举，而不是让整轮建索引崩掉。
+        """
+        if self._rec is not None or self._rec_unavailable:
+            return
+        prepare_paddle_env()
+        try:
+            from paddleocr import TextRecognition
+
+            self._rec = TextRecognition(
+                model_name=config.PADDLE_REC_MODEL_NAME,
+                enable_mkldnn=config.PADDLE_ENABLE_MKLDNN,
+            )
+        except Exception:
+            self._rec_unavailable = True
+
+    def read_line(self, image: np.ndarray) -> RawDetection:
+        """只跑识别模型。输入必须是已摆正的水平文字行。
+
+        返回结构与 read 不同：这里只有一条结果，键名也是单数
+        （实测 TextRecognition 返回 `rec_text` / `rec_score`，
+        而完整管线返回 `rec_texts` / `rec_scores`）。
+        """
+        self._ensure_rec_loaded()
+        if self._rec is None:
+            return RawDetection("", 0.0)
+        try:
+            results = self._rec.predict(image)
+        except Exception:
+            return RawDetection("", 0.0)
+        for res in results:
+            payload = getattr(res, "json", None)
+            if isinstance(payload, dict):
+                payload = payload.get("res", payload)
+            if not isinstance(payload, dict):
+                continue
+            text = payload.get("rec_text")
+            score = payload.get("rec_score")
+            if isinstance(text, str):
+                return RawDetection(text, float(score or 0.0))
+        return RawDetection("", 0.0)
 
 
 def _extract(res: object) -> list[RawDetection]:
