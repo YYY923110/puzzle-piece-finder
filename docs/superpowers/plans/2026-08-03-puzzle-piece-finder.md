@@ -2,6 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **先读 spec：** [`../specs/2026-08-03-puzzle-piece-finder.md`](../specs/2026-08-03-puzzle-piece-finder.md)
+> 记录了每条设计决策的理由，以及**被明确否决的替代方案**（大模型识别、SAM 分割、
+> 任意背景支持、人工回填等）。不要在实现过程中重新提议它们。
+
 **Goal:** 上传若干张拼图碎片照片建立「编号 → 碎片位置」索引，之后输入任意编号（如 `B-403`）即可在照片上高亮出对应碎片。
 
 **Architecture:** 三层。① 纯 Python 引擎：OpenCV 从深色背景分割出碎片轮廓 → 逐块裁剪 → PaddleOCR 识别编号 → 词表吸附 + 同图唯一性去重 → 输出 JSON 索引。② FastAPI 薄服务层：上传建索引、跨照片查询、服务端渲染高亮图。③ 单文件 HTML 前端：手机局域网访问，拍照上传、输编号、看高亮。引擎完全独立于 Web，可用 CLI 单独跑，便于调参迭代。
