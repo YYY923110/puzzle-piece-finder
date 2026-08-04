@@ -102,6 +102,29 @@ class TestExtractContours:
         blank = np.zeros((200, 200, 3), dtype=np.uint8)
         assert segment.extract_contours(blank) == []
 
+    def test_separated_puzzle_shaped_pieces_are_never_split(
+        self, separated_puzzle_pieces
+    ):
+        """带凸起的单块碎片必须原样通过，一块都不许切开。
+
+        这条是真实照片的回归测试。实测 real2.jpg：50 块碎片被
+        find_blobs 正确切成 50 个连通块，却因为每块的 peak_count 都是 3
+        （凸起各自形成一个山峰），unit_piece_area 被压低 3 倍，
+        48/48 被判定需要切分，最终产出 96 个轮廓——每块碎片被劈成两半，
+        裁剪图里只剩半个编号。
+        """
+        image, expected = separated_puzzle_pieces
+        assert len(segment.extract_contours(image)) == expected
+
+    def test_puzzle_piece_blobs_are_counted_as_one_each(
+        self, separated_puzzle_pieces
+    ):
+        """把根因单独钉死：单块碎片的期望块数必须是 1。"""
+        image, _ = separated_puzzle_pieces
+        blobs = segment.find_blobs(segment.build_mask(image))
+        unit = segment.unit_piece_area(image.shape[:2], blobs)
+        assert all(segment.expected_piece_count(b, unit) == 1 for b in blobs)
+
 
 class TestContourBbox:
     def test_returns_tight_bounding_box(self):

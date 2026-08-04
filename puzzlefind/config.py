@@ -28,6 +28,9 @@ MIN_AREA_RATIO: float = 0.25
 SPLIT_AREA_RATIO: float = 1.6
 # 分水岭种子搜索时，距离变换阈值的二分次数
 SPLIT_SEARCH_STEPS: int = 24
+# 连通块少于这个数时，面积分布没有统计支撑，改用形状信号（山峰计数）
+# 估计单块面积。真实照片动辄几十个连通块，走的一定是面积分支。
+MIN_BLOBS_FOR_AREA_PRIOR: int = 5
 # 形态学开运算核尺寸，用于去除掩膜毛刺
 MORPH_KERNEL_SIZE: int = 5
 
