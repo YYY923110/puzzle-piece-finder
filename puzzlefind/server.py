@@ -6,6 +6,7 @@ HTTP 编解码和文件落盘。
 """
 from __future__ import annotations
 
+import sys
 import uuid
 from pathlib import Path
 
@@ -190,4 +191,10 @@ def run(host: str = "0.0.0.0", port: int = 8000) -> None:
 
 
 if __name__ == "__main__":
-    run()
+    # 端口可覆盖：本机 8000 已被另一个 python 进程占着，而 Windows 允许
+    # 两个进程绑同一端口却不报错，请求会随机落到其中一个——排查起来很费劲。
+    #   python -m puzzlefind.server 8765
+    import os as _os
+
+    _port = int(sys.argv[1]) if len(sys.argv) > 1 else int(_os.environ.get("PUZZLEFIND_PORT", 8000))
+    run(port=_port)

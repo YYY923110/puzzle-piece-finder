@@ -1,1 +1,227 @@
-<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>拼图碎片查找器</title></head><body>placeholder</body></html>
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>拼图碎片查找器</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
+    background: #14161a; color: #e8e8ea;
+  }
+  header { padding: 12px 14px; background: #1c1f25; border-bottom: 1px solid #2a2e36; }
+  h1 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  input[type=text] {
+    flex: 1; padding: 11px 12px; font-size: 18px; letter-spacing: 1px;
+    border: 1px solid #363b45; border-radius: 8px; background: #0f1114; color: #e8e8ea;
+  }
+  button {
+    padding: 11px 16px; font-size: 15px; border: 0; border-radius: 8px;
+    background: #3d6fe0; color: #fff; font-weight: 600;
+  }
+  button.ghost { background: #2a2e36; color: #b9bcc4; font-weight: 500; }
+  button:disabled { opacity: .5; }
+  #status { padding: 9px 14px; font-size: 13px; min-height: 34px; line-height: 1.5; }
+  #status.err { color: #ff8a8a; }
+  #status.ok { color: #8ae6a8; }
+  #stage {
+    position: relative; overflow: hidden; background: #000;
+    height: calc(100vh - 210px); touch-action: none;
+  }
+  #view { position: absolute; transform-origin: 0 0; }
+  #thumb {
+    position: absolute; right: 10px; bottom: 10px; max-width: 128px;
+    border: 2px solid #ff00ff; border-radius: 6px; display: none; background: #000;
+  }
+  #photos { padding: 8px 14px 14px; font-size: 13px; color: #9aa0ab; }
+  .photo { display: flex; justify-content: space-between; padding: 5px 0; }
+  .photo button { padding: 3px 9px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>拼图碎片查找器</h1>
+  <div class="row">
+    <input type="text" id="code" placeholder="输入编号，如 B-403" autocomplete="off"
+           autocapitalize="characters" inputmode="text">
+    <button id="find">查找</button>
+  </div>
+  <div class="row">
+    <input type="file" id="file" accept="image/*" capture="environment" hidden>
+    <button class="ghost" id="upload">拍照 / 选图建索引</button>
+    <button class="ghost" id="reset">复位视图</button>
+  </div>
+</header>
+
+<div id="status">准备就绪。先拍一张碎片照片建立索引。</div>
+
+<div id="stage">
+  <img id="view" alt="">
+  <img id="thumb" alt="碎片缩略图">
+</div>
+
+<div id="photos"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status"), viewEl = $("view"), thumbEl = $("thumb"), stageEl = $("stage");
+
+let tx = 0, ty = 0, scale = 1;
+
+function say(text, kind) {
+  statusEl.textContent = text;
+  statusEl.className = kind || "";
+}
+
+function applyTransform() {
+  viewEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+}
+
+function resetView() {
+  tx = 0; ty = 0;
+  scale = viewEl.naturalWidth ? stageEl.clientWidth / viewEl.naturalWidth : 1;
+  applyTransform();
+}
+
+// ---- 缩放平移：单指拖动，双指捏合 ----
+let pointers = new Map(), lastMid = null, lastDist = 0;
+
+stageEl.addEventListener("pointerdown", (e) => {
+  stageEl.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  lastMid = null; lastDist = 0;
+});
+
+stageEl.addEventListener("pointermove", (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  const prev = pointers.get(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+  const pts = [...pointers.values()];
+  if (pts.length === 1) {
+    tx += e.clientX - prev.x;
+    ty += e.clientY - prev.y;
+  } else if (pts.length >= 2) {
+    const [a, b] = pts;
+    const dist = Math.hypot(a.x - b.x, a.y - b.y);
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    if (lastDist > 0) {
+      const factor = dist / lastDist;
+      // 以两指中点为锚点缩放，避免图像跳走
+      tx = mid.x - (mid.x - tx) * factor;
+      ty = mid.y - (mid.y - ty) * factor;
+      scale *= factor;
+    }
+    if (lastMid) { tx += mid.x - lastMid.x; ty += mid.y - lastMid.y; }
+    lastDist = dist; lastMid = mid;
+  }
+  applyTransform();
+});
+
+function endPointer(e) {
+  pointers.delete(e.pointerId);
+  if (pointers.size < 2) { lastDist = 0; lastMid = null; }
+}
+stageEl.addEventListener("pointerup", endPointer);
+stageEl.addEventListener("pointercancel", endPointer);
+
+stageEl.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+  tx = e.clientX - (e.clientX - tx) * factor;
+  ty = e.clientY - (e.clientY - ty) * factor;
+  scale *= factor;
+  applyTransform();
+}, { passive: false });
+
+$("reset").onclick = resetView;
+viewEl.onload = resetView;
+
+// ---- 照片列表 ----
+async function refreshPhotos() {
+  const data = await (await fetch("/api/photos")).json();
+  $("photos").innerHTML = data.photos.length
+    ? data.photos.map((p) =>
+        `<div class="photo"><span>${p.photo_id} — 已识别 ${p.recognized}/${p.total}
+         （建于 ${p.created_at.replace("T", " ")}）</span>
+         <button class="ghost" onclick="removePhoto('${p.photo_id}')">删除</button></div>`
+      ).join("")
+    : "<div>还没有任何照片。</div>";
+}
+
+window.removePhoto = async (photoId) => {
+  await fetch(`/api/photos/${photoId}`, { method: "DELETE" });
+  await refreshPhotos();
+  say(`已删除 ${photoId}。`, "ok");
+};
+
+// ---- 上传建索引 ----
+$("upload").onclick = () => $("file").click();
+
+$("file").onchange = async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  say("正在建索引，可能需要一两分钟，别关页面…");
+  $("upload").disabled = true;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    const response = await fetch("/api/photos", { method: "POST", body: form });
+    if (!response.ok) throw new Error((await response.json()).detail);
+    const r = await response.json();
+    say(`照片 ${r.photo_id}：分割 ${r.total} 块，识别 ${r.recognized} 块，`
+        + `未识别 ${r.unrecognized} 块。`, "ok");
+    await refreshPhotos();
+  } catch (error) {
+    say("建索引失败：" + error.message, "err");
+  } finally {
+    $("upload").disabled = false;
+    e.target.value = "";
+  }
+};
+
+// ---- 查询 ----
+async function find() {
+  const code = $("code").value.trim().toUpperCase();
+  if (!code) return;
+  thumbEl.style.display = "none";
+  say("查询中…");
+  try {
+    const result = await (await fetch(`/api/query?code=${encodeURIComponent(code)}`)).json();
+    if (result.found) {
+      viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}&t=${Date.now()}`;
+      thumbEl.src = `/api/thumbnail?code=${encodeURIComponent(code)}&t=${Date.now()}`;
+      thumbEl.style.display = "block";
+      say(`${code} 在照片 ${result.photo_id}，碎片 #${result.piece.piece_id}，`
+          + `置信度 ${result.piece.confidence.toFixed(2)}。对照右下角缩略图确认。`, "ok");
+    } else {
+      const entries = Object.entries(result.unrecognized);
+      if (!entries.length) {
+        say(`${code} 未找到，且所有碎片都已识别——它确实不在任何一张照片里。`, "err");
+        return;
+      }
+      const [photoId, ids] = entries[0];
+      viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}`
+                 + `&photo_id=${encodeURIComponent(photoId)}&t=${Date.now()}`;
+      const others = entries.slice(1)
+        .map(([id, list]) => `${id}(${list.length})`).join("、");
+      say(`${code} 没认出来。照片 ${photoId} 里这 ${ids.length} 块是未识别的（青色圈出），`
+          + `大概率在里面。` + (others ? ` 其他照片还有：${others}` : ""), "err");
+    }
+  } catch (error) {
+    say("查询失败：" + error.message, "err");
+  }
+}
+
+$("find").onclick = find;
+$("code").addEventListener("keydown", (e) => { if (e.key === "Enter") find(); });
+
+refreshPhotos();
+</script>
+</body>
+</html>

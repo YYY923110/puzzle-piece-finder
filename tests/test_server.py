@@ -123,3 +123,15 @@ class TestFrontend:
         response = client.get("/")
         assert response.status_code == 200
         assert "text/html" in response.headers["content-type"]
+
+    def test_html_wires_up_the_query_endpoint(self, client):
+        body = client.get("/").text
+        assert "/api/query" in body
+
+    def test_html_wires_up_the_upload_endpoint(self, client):
+        body = client.get("/").text
+        assert "/api/photos" in body
+
+    def test_html_uses_camera_capture_input(self, client):
+        body = client.get("/").text
+        assert 'capture="environment"' in body
