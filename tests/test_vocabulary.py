@@ -110,6 +110,29 @@ class TestBootstrapRanges:
         assert v.bootstrap_ranges([]) == {}
 
 
+class TestRobustRanges:
+    def test_fences_out_an_extreme_value(self):
+        """离群值不该参与定义它自己所属的区间——这正是 bootstrap_ranges
+        抓不到离群值的原因。"""
+        codes = ["B-262", "B-300", "B-350", "B-400", "B-901"]
+        assert v.robust_ranges(codes)["B"] == (262, 400)
+
+    def test_keeps_every_value_when_they_are_evenly_spread(self):
+        codes = ["B-100", "B-200", "B-300", "B-400", "B-500"]
+        assert v.robust_ranges(codes)["B"] == (100, 500)
+
+    def test_identical_values_collapse_to_a_point_range(self):
+        codes = ["B-403"] * 5
+        assert v.robust_ranges(codes)["B"] == (403, 403)
+
+    def test_ignores_prefixes_below_the_sample_floor(self):
+        # 四分位数在四个点以下没有意义，宁可不产出区间
+        assert v.robust_ranges(["B-262", "B-901", "B-500"]) == {}
+
+    def test_empty_input_yields_empty_ranges(self):
+        assert v.robust_ranges([]) == {}
+
+
 class TestIsOutlier:
     def test_code_inside_range_is_not_outlier(self):
         assert v.is_outlier("B-350", {"B": (262, 499)}) is False

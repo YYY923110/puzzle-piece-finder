@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import statistics
 from collections import defaultdict
 
 from . import config
@@ -174,6 +175,41 @@ def bootstrap_ranges(
         for prefix, nums in buckets.items()
         if len(nums) >= min_samples
     }
+
+
+def robust_ranges(
+    codes: list[str], min_samples: int = 4, k: float = 1.5
+) -> dict[str, tuple[int, int]]:
+    """自举区间的稳健版本：先用四分位距围栏剔掉极端值，再取剩余值的 min/max。
+
+    为什么不能直接用 bootstrap_ranges 来找离群值：那个区间是从**同一批
+    数据**里取 min/max 得来的，所以离群值永远是它自己的边界，永远落在
+    区间内，永远抓不到。B 组读出 262/300/350/400/901 时，
+    bootstrap_ranges 给出 (262, 901)，于是 901 完全合法。
+
+    改法是先画一道围栏：低于 Q1 - k·IQR 或高于 Q3 + k·IQR 的值不参与
+    定义区间。上例中围栏是 (150, 550)，901 被挡在外面，区间收成
+    (262, 400)，901 这才暴露成离群值。
+
+    样本数不足 min_samples 的字母组不产出区间。四分位数在四个点以下
+    没有意义，硬算只会把正常值判成离群。
+    """
+    buckets: dict[str, list[int]] = defaultdict(list)
+    for code in codes:
+        if is_valid_code(code):
+            buckets[code[0]].append(int(code[2:]))
+
+    ranges: dict[str, tuple[int, int]] = {}
+    for prefix, numbers in buckets.items():
+        if len(numbers) < min_samples:
+            continue
+        q1, _, q3 = statistics.quantiles(numbers, n=4, method="inclusive")
+        spread = q3 - q1
+        low_fence, high_fence = q1 - k * spread, q3 + k * spread
+        kept = [n for n in numbers if low_fence <= n <= high_fence]
+        if kept:
+            ranges[prefix] = (min(kept), max(kept))
+    return ranges
 
 
 def is_outlier(code: str, ranges: dict[str, tuple[int, int]]) -> bool:
