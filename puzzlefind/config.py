@@ -50,6 +50,10 @@ SWEEP_CONFIDENCE_THRESHOLD: float = 0.90
 SWEEP_ANGLES: tuple[int, ...] = (0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330)
 # 低于此置信度的识别结果直接判为「未识别」
 MIN_ACCEPT_CONFIDENCE: float = 0.35
+# 透视裁剪出的文字行，高/宽 达到此值时判定检测框的点序把长短边判反了
+# （文字竖排时必然发生），转 90° 摆正。编号 "B-299" 本身宽远大于高，
+# 正常裁剪不可能触发。不补这一步，旋转 90°/270° 的碎片会读出 89/169/382 这类垃圾。
+LINE_DESKEW_ROTATE_RATIO: float = 1.5
 
 # ---------- PaddleOCR 运行时 ----------
 # 模型下载源。国内 bos（百度自家）最快；可选 modelscope / aistudio / huggingface

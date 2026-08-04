@@ -233,6 +233,49 @@ def rotate_expand(image: np.ndarray, angle: int) -> np.ndarray:
     )
 
 
+def deskew_quad(image: np.ndarray, quad: list[list[int]]) -> np.ndarray:
+    """按检测器给出的四边形透视裁剪，输出一条摆正的水平文字行。
+
+    这是 PaddleOCR 内部 `get_rotate_crop_image` 的等价实现。自己实现而不是
+    从 paddlex 内部 import，是因为那是私有路径，版本间会挪窝；而这段几何
+    只有十几行，还能脱离 PaddleOCR 单独测。
+
+    末尾那次 rot90 是**必须的**，不是保险：文字竖排时（碎片旋转 90°/270°）
+    DB 检测器给出的点序会把长短边判反，裁出来是一条竖着的图，rec 模型
+    读它只会吐出 89/169/382 这类垃圾。实测漏掉这一步会让 90° 和 270°
+    两个角度全线失败。
+    """
+    import cv2
+
+    points = np.asarray(quad, dtype=np.float32).reshape(4, 2)
+    width = int(max(
+        np.linalg.norm(points[0] - points[1]),
+        np.linalg.norm(points[2] - points[3]),
+    ))
+    height = int(max(
+        np.linalg.norm(points[0] - points[3]),
+        np.linalg.norm(points[1] - points[2]),
+    ))
+    width, height = max(1, width), max(1, height)
+
+    destination = np.array(
+        [[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32
+    )
+    line = cv2.warpPerspective(
+        image,
+        cv2.getPerspectiveTransform(points, destination),
+        (width, height),
+        borderMode=cv2.BORDER_REPLICATE,
+        flags=cv2.INTER_CUBIC,
+    )
+
+    if line.shape[0] / max(1, line.shape[1]) >= config.LINE_DESKEW_ROTATE_RATIO:
+        line = np.rot90(line)
+
+    # warpPerspective / rot90 之后可能不是连续内存，Paddle 要求连续
+    return np.ascontiguousarray(line)
+
+
 def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
     """Pass C：把裁剪图旋转一圈，每个角度都识别一次，取最优。
 

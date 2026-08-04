@@ -113,6 +113,65 @@ class TestRotateExpand:
         assert rotated.shape[1] > 100
 
 
+class TestDeskewQuad:
+    def test_axis_aligned_quad_crops_exactly_that_rectangle(self):
+        image = np.zeros((100, 200, 3), dtype=np.uint8)
+        image[20:50, 30:130] = 255
+        quad = [[30, 20], [130, 20], [130, 50], [30, 50]]
+
+        line = recognize.deskew_quad(image, quad)
+
+        assert line.shape[1] == 100      # 宽
+        assert line.shape[0] == 30       # 高
+        assert line.mean() > 250         # 裁出来的确实是那块白区
+
+    def test_vertical_quad_is_rotated_back_to_horizontal(self):
+        """竖排的框必须被转正——否则 rec 模型读不出来。
+
+        这条钉的是第一轮验证踩到的真实缺陷：碎片旋转 90°/270° 时
+        检测框的点序会把长短边判反，不补 rot90 就会读出 89/169/382 这类垃圾。
+        """
+        image = np.zeros((200, 100, 3), dtype=np.uint8)
+        image[30:130, 20:50] = 255
+        quad = [[20, 30], [50, 30], [50, 130], [20, 130]]   # 高 100 / 宽 30 = 3.3
+
+        line = recognize.deskew_quad(image, quad)
+
+        assert line.shape[1] > line.shape[0], "竖排文字行没有被转正"
+
+    def test_wide_quad_is_left_alone(self):
+        image = np.zeros((100, 200, 3), dtype=np.uint8)
+        quad = [[10, 10], [150, 10], [150, 40], [10, 40]]   # 高 30 / 宽 140，很扁
+        line = recognize.deskew_quad(image, quad)
+        assert line.shape[1] > line.shape[0]
+
+    def test_rotated_quad_is_straightened(self):
+        """把四边形按 45° 给出，裁出来的应该是一条水平的条。"""
+        import math
+
+        image = np.zeros((300, 300, 3), dtype=np.uint8)
+        cx, cy = 150.0, 150.0
+        half_w, half_h = 60.0, 12.0
+        corners = [(-half_w, -half_h), (half_w, -half_h), (half_w, half_h), (-half_w, half_h)]
+        angle = math.radians(45)
+        quad = [
+            [round(cx + x * math.cos(angle) - y * math.sin(angle)),
+             round(cy + x * math.sin(angle) + y * math.cos(angle))]
+            for x, y in corners
+        ]
+
+        line = recognize.deskew_quad(image, quad)
+
+        assert line.shape[1] == pytest.approx(2 * half_w, abs=3)
+        assert line.shape[0] == pytest.approx(2 * half_h, abs=3)
+
+    def test_degenerate_quad_does_not_crash(self):
+        image = np.zeros((50, 50, 3), dtype=np.uint8)
+        quad = [[10, 10], [10, 10], [10, 10], [10, 10]]
+        line = recognize.deskew_quad(image, quad)
+        assert line.size >= 0
+
+
 class TestRecognizeSweep:
     def test_finds_code_at_a_later_angle(self, blank_crop):
         from puzzlefind import config
