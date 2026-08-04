@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# 运行时产物：照片、索引、调试中间图都不进版本库
+data/
+debug/
+
+# 环境
+.venv/
+venv/
+.env
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
