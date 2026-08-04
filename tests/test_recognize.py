@@ -66,6 +66,35 @@ class TestRecognizeDirect:
         assert result.code == "B-403"
 
 
+class TestBestPoly:
+    def test_returns_none_when_no_detection_has_a_poly(self):
+        detections = [RawDetection("B-403", 0.9), RawDetection("A-111", 0.5)]
+        assert recognize.best_poly(detections) is None
+
+    def test_returns_none_for_empty_detections(self):
+        assert recognize.best_poly([]) is None
+
+    def test_picks_poly_of_highest_scoring_detection(self):
+        low = [[0, 0], [10, 0], [10, 5], [0, 5]]
+        high = [[20, 20], [40, 20], [40, 30], [20, 30]]
+        detections = [
+            RawDetection("A-111", 0.40, low),
+            RawDetection("B-403", 0.93, high),
+        ]
+        assert recognize.best_poly(detections) == high
+
+    def test_ignores_high_scoring_detection_that_has_no_poly(self):
+        poly = [[0, 0], [10, 0], [10, 5], [0, 5]]
+        detections = [
+            RawDetection("QWERTY", 0.99),          # 分最高但没有框
+            RawDetection("B-403", 0.42, poly),
+        ]
+        assert recognize.best_poly(detections) == poly
+
+    def test_poly_defaults_to_none_so_existing_call_sites_keep_working(self):
+        assert RawDetection("B-403", 0.9).poly is None
+
+
 class TestRotateExpand:
     def test_zero_degrees_returns_same_shape(self):
         image = np.zeros((60, 100, 3), dtype=np.uint8)

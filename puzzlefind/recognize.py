@@ -16,10 +16,17 @@ from . import config, vocabulary
 
 @dataclass(frozen=True)
 class RawDetection:
-    """OCR 后端返回的一条原始检测结果。"""
+    """OCR 后端返回的一条原始检测结果。
+
+    poly 是检测器给出的文字四边形（原图坐标，4 个点）。它是本工具提速的
+    关键：det 模型占了单次识别 92% 的耗时，而它在 rec 读错时往往**框仍是对的**，
+    所以拿到框之后就能只重跑便宜的 rec 模型，不必再跑一遍 det。
+    后端没有框（或不是基于检测的后端）时为 None，此时自动降级为全量角度穷举。
+    """
 
     text: str
     score: float
+    poly: list[list[int]] | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +122,9 @@ def _extract(res: object) -> list[RawDetection]:
 
     本机 paddleocr 3.7.0 / PP-OCRv6 的实测结构（探针输出）：
         res.json == {"res": {..., "rec_texts": ["B-403"],
-                             "rec_scores": [0.9999], ...}}
+                             "rec_scores": [0.9999],
+                             "dt_polys": [[[145,142],[348,142],[348,231],[145,231]]],
+                             ...}}
     """
     payload = getattr(res, "json", None)
     if isinstance(payload, dict):
@@ -129,11 +138,37 @@ def _extract(res: object) -> list[RawDetection]:
 
     texts = payload.get("rec_texts") or []
     scores = payload.get("rec_scores") or []
-    return [
-        RawDetection(str(t), float(s))
-        for t, s in zip(texts, scores)
-        if isinstance(t, str)
-    ]
+    polys = payload.get("dt_polys") or []
+
+    detections: list[RawDetection] = []
+    for index, (text, score) in enumerate(zip(texts, scores)):
+        if not isinstance(text, str):
+            continue
+        poly = None
+        if index < len(polys):
+            # dt_polys 的元素可能是 numpy 数组也可能是嵌套 list，
+            # 统一成 list[list[int]]，免得下游还要判类型
+            raw = polys[index]
+            points = raw.tolist() if hasattr(raw, "tolist") else raw
+            poly = [[int(x), int(y)] for x, y in points]
+        detections.append(RawDetection(text, float(score), poly))
+    return detections
+
+
+def best_poly(detections: list[RawDetection]) -> list[list[int]] | None:
+    """分数最高的那条检测的四边形；都没有框则返回 None。
+
+    刻意按「分数」而不是「能否吸附到合法编号」来挑：rec 把 B-296 读成
+    38929 的时候，det 的框仍然精确地圈着那行字。本方案就是靠这一点，
+    用一个对的框换掉 12 次昂贵的重复检测。
+    """
+    best: RawDetection | None = None
+    for detection in detections:
+        if detection.poly is None:
+            continue
+        if best is None or detection.score > best.score:
+            best = detection
+    return best.poly if best is not None else None
 
 
 _NO_RESULT = RecogResult(code=None, confidence=0.0, raw_text=None, method="none", angle=None)
