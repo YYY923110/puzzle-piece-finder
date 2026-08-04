@@ -170,22 +170,89 @@ def create_app(
     return app
 
 
-def run(host: str = "0.0.0.0", port: int = 8000) -> None:
-    """起服务并打印局域网访问地址。"""
+def _pick_lan_ip(candidates: list[str]) -> str:
+    """从本机所有 IPv4 里挑一个手机真能连上的。
+
+    不能只用「连一下 8.8.8.8 看本地端点」那个经典技巧：本机装了代理
+    （Clash/Mihomo 之类）时，它的 TUN 网卡会接管默认路由，那个技巧
+    返回的是 198.18.0.0——RFC2544 基准测试段，手机连不上，而且报错
+    形式是「连接超时」，跟防火墙拦截长得一模一样，排查起来很费劲。
+
+    所以改成按网段优先级挑：192.168 最优（家用路由器几乎都发这个），
+    其次 10.x，最后 172.16–31。虚拟网卡（WSL 常占 172.22）因此自然
+    排在真实无线网卡后面。
+    """
+    def rank(ip: str) -> int:
+        if ip.startswith("192.168."):
+            return 0
+        if ip.startswith("10."):
+            return 1
+        if ip.startswith("172."):
+            second = int(ip.split(".")[1]) if ip.count(".") == 3 else 0
+            return 2 if 16 <= second <= 31 else 99
+        return 99
+
+    usable = sorted((ip for ip in candidates if rank(ip) < 99), key=rank)
+    return usable[0] if usable else "127.0.0.1"
+
+
+def _local_ipv4_addresses() -> list[str]:
+    """本机所有 IPv4 地址，尽量把每块网卡都枚举出来。
+
+    三个来源依次尝试，因为没有哪一个在所有情况下都够用：
+
+    1. psutil —— 唯一能真正遍历所有网卡的。本机实测：装了代理时，
+       只有它能看见 WLAN 的 192.168.2.119，另外两种方法全都只返回
+       代理 TUN 网卡的 198.18.0.0。psutil 是 paddlex 的依赖，装好
+       PaddleOCR 就一定在，所以不额外声明为直接依赖，但它缺席时也不能崩。
+    2. 主机名解析 —— psutil 不在时的退路。
+    3. 连 8.8.8.8 的 UDP 技巧 —— 没有代理时它是对的，留着做兜底。
+    """
     import socket
 
-    import uvicorn
+    addresses: list[str] = []
+
+    def add(address: str) -> None:
+        if address and address not in addresses:
+            addresses.append(address)
+
+    try:
+        import psutil
+
+        for interface_addrs in psutil.net_if_addrs().values():
+            for addr in interface_addrs:
+                if addr.family == socket.AF_INET:
+                    add(addr.address)
+    except Exception:
+        pass
+
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            add(info[4][0])
+    except OSError:
+        pass
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         sock.connect(("8.8.8.8", 80))
-        lan_ip = sock.getsockname()[0]
+        add(sock.getsockname()[0])
     except OSError:
-        lan_ip = "127.0.0.1"
+        pass
     finally:
         sock.close()
 
+    return addresses
+
+
+def run(host: str = "0.0.0.0", port: int = 8000) -> None:
+    """起服务并打印局域网访问地址。"""
+    import uvicorn
+
+    lan_ip = _pick_lan_ip(_local_ipv4_addresses())
+
     print(f"\n手机浏览器打开: http://{lan_ip}:{port}\n")
+    if lan_ip == "127.0.0.1":
+        print("没找到局域网地址。确认电脑连着 Wi-Fi，和手机在同一个网络下。\n")
     print("若手机连不上，检查 Windows 防火墙是否放行了该端口。\n")
     uvicorn.run(create_app(), host=host, port=port)
 
