@@ -5,99 +5,414 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>拼图碎片查找器</title>
 <style>
-  :root { color-scheme: dark; }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: system-ui, -apple-system, "PingFang SC", sans-serif;
-    background: #14161a; color: #e8e8ea;
+/* ─────────────────────────────────────────────────────────────
+   配色直接取自引擎，不是另起炉灶：
+   洋红 = config.OUTLINE_COLOR（命中碎片的描边）
+   青色 = config.UNKNOWN_OUTLINE_COLOR（未识别碎片的描边）
+   米白 = 碎片背面的实际颜色（合成图里是 235,233,228）
+   界面若用别的强调色，就会和服务端渲染出来的高亮图打架。
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --table:      #12100e;   /* 桌面：偏暖的近黑，不是蓝黑 */
+  --felt:       #1b1815;
+  --ridge:      #2a2621;
+  --chipboard:  #e3ddd1;   /* 碎片背面 */
+  --graphite:   #8f887c;   /* 碎片上印刷体的灰 */
+  --muted:      #6a645b;
+  --target:     #ff2bd1;   /* 对齐 OUTLINE_COLOR */
+  --unknown:    #35e0e0;   /* 对齐 UNKNOWN_OUTLINE_COLOR */
+
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono",
+          Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--table);
+  color: var(--chipboard);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow: hidden;
+}
+
+/* ── 布局：左侧仪表栏 + 右侧取景器 ───────────────────────────── */
+.app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: 100dvh;
+}
+
+.rail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 22px 20px;
+  background: var(--felt);
+  border-right: 1px solid var(--ridge);
+  overflow-y: auto;
+}
+
+/* ── 标题 ───────────────────────────────────────────────────── */
+.brand-name {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 620;
+  letter-spacing: .02em;
+}
+.brand-note {
+  margin: 3px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* ── 查询区：编号输入框本身就是主角字体 ─────────────────────── */
+.field-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+
+.query-row { display: flex; gap: 8px; }
+
+#code {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  background: var(--table);
+  border: 1px solid var(--ridge);
+  border-radius: 7px;
+  color: var(--chipboard);
+  font-family: var(--mono);
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: .18em;
+  text-transform: uppercase;
+}
+#code::placeholder { color: #4a453e; letter-spacing: .18em; }
+#code:focus { outline: 2px solid var(--target); outline-offset: 1px; border-color: transparent; }
+
+.btn {
+  padding: 12px 16px;
+  border: 1px solid var(--ridge);
+  border-radius: 7px;
+  background: var(--ridge);
+  color: var(--chipboard);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn:hover { background: #363029; }
+.btn:focus-visible { outline: 2px solid var(--target); outline-offset: 2px; }
+.btn:disabled { opacity: .45; cursor: default; }
+
+.btn-find { background: var(--target); border-color: var(--target); color: #16000f; }
+.btn-find:hover { background: #ff5cdb; border-color: #ff5cdb; }
+
+.btn-quiet { background: transparent; color: var(--graphite); font-weight: 500; }
+.btn-quiet:hover { background: var(--ridge); color: var(--chipboard); }
+
+.rail-actions { display: flex; gap: 8px; }
+.rail-actions .btn { flex: 1; }
+
+/* ── 状态行 ─────────────────────────────────────────────────── */
+#status {
+  font-size: 13px;
+  color: var(--graphite);
+  min-height: 40px;
+  border-left: 2px solid var(--ridge);
+  padding-left: 11px;
+}
+#status.is-hit  { color: var(--chipboard); border-left-color: var(--target); }
+#status.is-miss { color: var(--chipboard); border-left-color: var(--unknown); }
+#status.is-bad  { color: #ffb4b4;          border-left-color: #b4483f; }
+
+/* ── 碎片卡：本设计的签名元素 ────────────────────────────────
+   左右两边用 radial-gradient 遮罩铣出凹口，复刻拼图碎片的模切轮廓。
+   只在这一处放胆，其余一律克制。 */
+.piece-card {
+  display: none;
+  background: var(--chipboard);
+  color: #221f1a;
+  border-radius: 10px;
+  padding: 14px 18px;
+  --notch: 13px;
+  -webkit-mask:
+    radial-gradient(var(--notch) at left  50%, transparent 98%, #000 100%),
+    radial-gradient(var(--notch) at right 50%, transparent 98%, #000 100%);
+  -webkit-mask-composite: source-in;
+  mask:
+    radial-gradient(var(--notch) at left  50%, transparent 98%, #000 100%),
+    radial-gradient(var(--notch) at right 50%, transparent 98%, #000 100%);
+  mask-composite: intersect;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+.piece-card.is-shown { display: block; animation: card-in .22s ease-out; }
+
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.piece-code {
+  font-family: var(--mono);
+  font-size: 29px;
+  font-weight: 700;
+  letter-spacing: .1em;
+  line-height: 1.1;
+  margin: 0;
+}
+.piece-where {
+  margin: 5px 0 12px;
+  font-size: 12px;
+  color: #6d665c;
+}
+/* 缩略图底色跟照片背景一致：碎片是从深色桌面上抠下来的，
+   底色若用卡片的米白，图没加载完时会闪一道白边。 */
+.piece-thumb {
+  display: block;
+  width: 100%;
+  border-radius: 5px;
+  background: #14120f;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .3);
+}
+.piece-verify {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7d766b;
+}
+
+/* ── 照片列表 ───────────────────────────────────────────────── */
+.photos-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+#photos { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+
+.photo-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  background: var(--table);
+  border: 1px solid var(--ridge);
+  border-radius: 7px;
+}
+.photo-id { font-family: var(--mono); font-size: 13px; }
+.photo-stat { font-size: 11px; color: var(--muted); }
+.photo-row .btn { padding: 5px 9px; font-size: 11px; }
+
+.rail-empty { font-size: 12px; color: var(--muted); }
+
+/* ── 取景器 ─────────────────────────────────────────────────── */
+.stage { position: relative; overflow: hidden; background: #0b0a09; }
+
+#viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+#viewport:active { cursor: grabbing; }
+#view { position: absolute; transform-origin: 0 0; image-rendering: auto; }
+
+.tools {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  background: rgba(18, 16, 14, .88);
+  border: 1px solid var(--ridge);
+  border-radius: 9px;
+  backdrop-filter: blur(6px);
+}
+.tools .btn { padding: 7px 11px; font-size: 12px; }
+
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  text-align: center;
+  padding: 30px;
+  pointer-events: none;
+}
+.stage-empty.is-gone { display: none; }
+.stage-empty h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  color: var(--graphite);
+}
+.stage-empty p { margin: 0; max-width: 34ch; color: var(--muted); font-size: 13px; }
+
+/* ── 窄屏：仪表栏收到顶部 ───────────────────────────────────── */
+@media (max-width: 860px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--ridge);
+    max-height: 58dvh;
+    padding: 14px 15px;
+    gap: 13px;
   }
-  header { padding: 12px 14px; background: #1c1f25; border-bottom: 1px solid #2a2e36; }
-  h1 { margin: 0 0 10px; font-size: 16px; font-weight: 600; }
-  .row { display: flex; gap: 8px; align-items: center; }
-  .row + .row { margin-top: 8px; }
-  input[type=text] {
-    flex: 1; padding: 11px 12px; font-size: 18px; letter-spacing: 1px;
-    border: 1px solid #363b45; border-radius: 8px; background: #0f1114; color: #e8e8ea;
-  }
-  button {
-    padding: 11px 16px; font-size: 15px; border: 0; border-radius: 8px;
-    background: #3d6fe0; color: #fff; font-weight: 600;
-  }
-  button.ghost { background: #2a2e36; color: #b9bcc4; font-weight: 500; }
-  button:disabled { opacity: .5; }
-  #status { padding: 9px 14px; font-size: 13px; min-height: 34px; line-height: 1.5; }
-  #status.err { color: #ff8a8a; }
-  #status.ok { color: #8ae6a8; }
-  #stage {
-    position: relative; overflow: hidden; background: #000;
-    height: calc(100vh - 210px); touch-action: none;
-  }
-  #view { position: absolute; transform-origin: 0 0; }
-  #thumb {
-    position: absolute; right: 10px; bottom: 10px; max-width: 128px;
-    border: 2px solid #ff00ff; border-radius: 6px; display: none; background: #000;
-  }
-  #photos { padding: 8px 14px 14px; font-size: 13px; color: #9aa0ab; }
-  .photo { display: flex; justify-content: space-between; padding: 5px 0; }
-  .photo button { padding: 3px 9px; font-size: 12px; }
+  #code { font-size: 19px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .piece-card.is-shown { animation: none; }
+  .btn { transition: none; }
+}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>拼图碎片查找器</h1>
-  <div class="row">
-    <input type="text" id="code" placeholder="输入编号，如 B-403" autocomplete="off"
-           autocapitalize="characters" inputmode="text">
-    <button id="find">查找</button>
-  </div>
-  <div class="row">
-    <input type="file" id="file" accept="image/*" capture="environment" hidden>
-    <button class="ghost" id="upload">拍照 / 选图建索引</button>
-    <button class="ghost" id="reset">复位视图</button>
-  </div>
-</header>
+<div class="app">
+  <aside class="rail">
+    <div>
+      <h1 class="brand-name">拼图碎片查找器</h1>
+      <p class="brand-note">输入编号，在照片里定位那一块</p>
+    </div>
 
-<div id="status">准备就绪。先拍一张碎片照片建立索引。</div>
+    <div>
+      <label class="field-label" for="code">碎片编号</label>
+      <div class="query-row">
+        <input id="code" type="text" placeholder="B-506" autocomplete="off"
+               autocapitalize="characters" spellcheck="false" inputmode="text">
+        <button class="btn btn-find" id="find">查找</button>
+      </div>
+    </div>
 
-<div id="stage">
-  <img id="view" alt="">
-  <img id="thumb" alt="碎片缩略图">
+    <p id="status">还没有照片。先上传一张摊开碎片的照片，建好索引后就能按编号查了。</p>
+
+    <article class="piece-card" id="card">
+      <p class="piece-code" id="cardCode">—</p>
+      <p class="piece-where" id="cardWhere"></p>
+      <img class="piece-thumb" id="cardThumb" alt="这块碎片的实拍裁剪图">
+      <p class="piece-verify">对一眼图上的编号，确认系统没认错。</p>
+    </article>
+
+    <div class="rail-actions">
+      <input type="file" id="file" accept="image/*" capture="environment" hidden>
+      <button class="btn" id="upload">上传照片建索引</button>
+    </div>
+
+    <div>
+      <div class="photos-head">
+        <span class="field-label" style="margin:0">已建索引的照片</span>
+      </div>
+      <div id="photos"></div>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div id="viewport">
+      <img id="view" alt="">
+    </div>
+
+    <div class="stage-empty" id="stageEmpty">
+      <h2>取景器</h2>
+      <p>查到碎片后，这里显示整张照片：目标保持原亮度，其余压暗，方便你把屏幕上的位置对到桌上。</p>
+    </div>
+
+    <div class="tools">
+      <button class="btn btn-quiet" id="zoomOut" title="缩小">−</button>
+      <button class="btn btn-quiet" id="fit">铺满</button>
+      <button class="btn btn-quiet" id="zoomIn" title="放大">＋</button>
+      <button class="btn btn-quiet" id="center">居中到碎片</button>
+    </div>
+  </main>
 </div>
-
-<div id="photos"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const statusEl = $("status"), viewEl = $("view"), thumbEl = $("thumb"), stageEl = $("stage");
+const statusEl = $("status"), viewEl = $("view"), viewport = $("viewport");
+const card = $("card"), stageEmpty = $("stageEmpty");
 
 let tx = 0, ty = 0, scale = 1;
+let lastPiece = null;   // 最近一次命中的碎片，"居中到碎片" 用
 
 function say(text, kind) {
   statusEl.textContent = text;
-  statusEl.className = kind || "";
+  statusEl.className = kind ? "is-" + kind : "";
 }
 
 function applyTransform() {
   viewEl.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
 }
 
-function resetView() {
-  tx = 0; ty = 0;
-  scale = viewEl.naturalWidth ? stageEl.clientWidth / viewEl.naturalWidth : 1;
+function fitToView() {
+  if (!viewEl.naturalWidth) return;
+  const sx = viewport.clientWidth / viewEl.naturalWidth;
+  const sy = viewport.clientHeight / viewEl.naturalHeight;
+  scale = Math.min(sx, sy);
+  tx = (viewport.clientWidth - viewEl.naturalWidth * scale) / 2;
+  ty = (viewport.clientHeight - viewEl.naturalHeight * scale) / 2;
   applyTransform();
 }
 
-// ---- 缩放平移：单指拖动，双指捏合 ----
-let pointers = new Map(), lastMid = null, lastDist = 0;
+function zoomAt(cx, cy, factor) {
+  scale *= factor;
+  tx = cx - (cx - tx) * factor;
+  ty = cy - (cy - ty) * factor;
+  applyTransform();
+}
 
-stageEl.addEventListener("pointerdown", (e) => {
-  stageEl.setPointerCapture(e.pointerId);
+/* 把目标碎片挪到取景器正中。spec 5.7 明确否决了"查询后自动缩放"——
+   会毁掉空间定位参照——所以这里只在用户主动点击时才动。 */
+function centerOnPiece() {
+  if (!lastPiece || !viewEl.naturalWidth) return;
+  const [x, y, w, h] = lastPiece.bbox;
+  scale = Math.min(6, Math.max(scale, viewport.clientHeight / (h * 5)));
+  tx = viewport.clientWidth / 2 - (x + w / 2) * scale;
+  ty = viewport.clientHeight / 2 - (y + h / 2) * scale;
+  applyTransform();
+}
+
+/* 位置用大白话说出来。屏幕只是中介，真正的目标是让手伸到桌上对的地方，
+   所以"右上区"这种说法比坐标有用。 */
+function zoneOf(piece) {
+  if (!viewEl.naturalWidth) return "";
+  const [x, y, w, h] = piece.bbox;
+  const cols = ["左", "中", "右"], rows = ["上", "中", "下"];
+  const c = Math.min(2, Math.floor(((x + w / 2) / viewEl.naturalWidth) * 3));
+  const r = Math.min(2, Math.floor(((y + h / 2) / viewEl.naturalHeight) * 3));
+  return (c === 1 && r === 1) ? "正中" : cols[c] + rows[r] + "区";
+}
+
+/* ── 缩放平移：单指拖动，双指捏合，滚轮缩放 ───────────────── */
+const pointers = new Map();
+let lastMid = null, lastDist = 0;
+
+viewport.addEventListener("pointerdown", (e) => {
+  viewport.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   lastMid = null; lastDist = 0;
 });
 
-stageEl.addEventListener("pointermove", (e) => {
+viewport.addEventListener("pointermove", (e) => {
   if (!pointers.has(e.pointerId)) return;
   const prev = pointers.get(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -106,17 +421,11 @@ stageEl.addEventListener("pointermove", (e) => {
   if (pts.length === 1) {
     tx += e.clientX - prev.x;
     ty += e.clientY - prev.y;
-  } else if (pts.length >= 2) {
+  } else {
     const [a, b] = pts;
     const dist = Math.hypot(a.x - b.x, a.y - b.y);
     const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-    if (lastDist > 0) {
-      const factor = dist / lastDist;
-      // 以两指中点为锚点缩放，避免图像跳走
-      tx = mid.x - (mid.x - tx) * factor;
-      ty = mid.y - (mid.y - ty) * factor;
-      scale *= factor;
-    }
+    if (lastDist > 0) zoomAt(mid.x, mid.y, dist / lastDist);
     if (lastMid) { tx += mid.x - lastMid.x; ty += mid.y - lastMid.y; }
     lastDist = dist; lastMid = mid;
   }
@@ -127,95 +436,141 @@ function endPointer(e) {
   pointers.delete(e.pointerId);
   if (pointers.size < 2) { lastDist = 0; lastMid = null; }
 }
-stageEl.addEventListener("pointerup", endPointer);
-stageEl.addEventListener("pointercancel", endPointer);
+viewport.addEventListener("pointerup", endPointer);
+viewport.addEventListener("pointercancel", endPointer);
 
-stageEl.addEventListener("wheel", (e) => {
+viewport.addEventListener("wheel", (e) => {
   e.preventDefault();
-  const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
-  tx = e.clientX - (e.clientX - tx) * factor;
-  ty = e.clientY - (e.clientY - ty) * factor;
-  scale *= factor;
-  applyTransform();
+  zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
 }, { passive: false });
 
-$("reset").onclick = resetView;
-viewEl.onload = resetView;
+$("fit").onclick = fitToView;
+$("zoomIn").onclick = () => zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, 1.25);
+$("zoomOut").onclick = () => zoomAt(viewport.clientWidth / 2, viewport.clientHeight / 2, 1 / 1.25);
+$("center").onclick = centerOnPiece;
 
-// ---- 照片列表 ----
+viewEl.onload = () => { stageEmpty.classList.add("is-gone"); fitToView(); };
+addEventListener("resize", () => { if (viewEl.naturalWidth) fitToView(); });
+
+/* ── 照片列表 ───────────────────────────────────────────────── */
 async function refreshPhotos() {
-  const data = await (await fetch("/api/photos")).json();
-  $("photos").innerHTML = data.photos.length
-    ? data.photos.map((p) =>
-        `<div class="photo"><span>${p.photo_id} — 已识别 ${p.recognized}/${p.total}
-         （建于 ${p.created_at.replace("T", " ")}）</span>
-         <button class="ghost" onclick="removePhoto('${p.photo_id}')">删除</button></div>`
-      ).join("")
-    : "<div>还没有任何照片。</div>";
+  let data;
+  try {
+    data = await (await fetch("/api/photos")).json();
+  } catch { return; }
+
+  const box = $("photos");
+  box.textContent = "";
+  if (!data.photos.length) {
+    const p = document.createElement("p");
+    p.className = "rail-empty";
+    p.textContent = "还没有照片。";
+    box.append(p);
+    return;
+  }
+  for (const photo of data.photos) {
+    const row = document.createElement("div");
+    row.className = "photo-row";
+
+    const info = document.createElement("div");
+    const id = document.createElement("div");
+    id.className = "photo-id";
+    id.textContent = photo.photo_id;
+    const stat = document.createElement("div");
+    stat.className = "photo-stat";
+    stat.textContent = `已识别 ${photo.recognized}/${photo.total} · `
+                     + photo.created_at.replace("T", " ");
+    info.append(id, stat);
+
+    const del = document.createElement("button");
+    del.className = "btn btn-quiet";
+    del.textContent = "删除";
+    del.onclick = () => removePhoto(photo.photo_id);
+
+    row.append(info, del);
+    box.append(row);
+  }
 }
 
-window.removePhoto = async (photoId) => {
-  await fetch(`/api/photos/${photoId}`, { method: "DELETE" });
+async function removePhoto(photoId) {
+  await fetch(`/api/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" });
   await refreshPhotos();
-  say(`已删除 ${photoId}。`, "ok");
-};
+  say(`已删除 ${photoId} 的索引。`);
+}
 
-// ---- 上传建索引 ----
+/* ── 上传建索引 ─────────────────────────────────────────────── */
 $("upload").onclick = () => $("file").click();
 
 $("file").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  say("正在建索引，可能需要一两分钟，别关页面…");
+  say("正在建索引。每块碎片要转一圈识别，50 块大约十分钟，别关页面。");
   $("upload").disabled = true;
   try {
     const form = new FormData();
     form.append("file", file);
     const response = await fetch("/api/photos", { method: "POST", body: form });
-    if (!response.ok) throw new Error((await response.json()).detail);
-    const r = await response.json();
-    say(`照片 ${r.photo_id}：分割 ${r.total} 块，识别 ${r.recognized} 块，`
-        + `未识别 ${r.unrecognized} 块。`, "ok");
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.detail || response.status);
+    say(`照片 ${body.photo_id} 已建索引：分割 ${body.total} 块，`
+      + `读出编号 ${body.recognized} 块，未识别 ${body.unrecognized} 块。`, "hit");
     await refreshPhotos();
   } catch (error) {
-    say("建索引失败：" + error.message, "err");
+    say(`建索引失败：${error.message}。换一张深色纯背景、碎片摊开不重叠的照片再试。`, "bad");
   } finally {
     $("upload").disabled = false;
     e.target.value = "";
   }
 };
 
-// ---- 查询 ----
+/* ── 查询 ───────────────────────────────────────────────────── */
 async function find() {
   const code = $("code").value.trim().toUpperCase();
-  if (!code) return;
-  thumbEl.style.display = "none";
-  say("查询中…");
+  if (!code) { $("code").focus(); return; }
+
+  card.classList.remove("is-shown");
+  lastPiece = null;
+  say(`正在查找 ${code}…`);
+
+  let result;
   try {
-    const result = await (await fetch(`/api/query?code=${encodeURIComponent(code)}`)).json();
-    if (result.found) {
-      viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}&t=${Date.now()}`;
-      thumbEl.src = `/api/thumbnail?code=${encodeURIComponent(code)}&t=${Date.now()}`;
-      thumbEl.style.display = "block";
-      say(`${code} 在照片 ${result.photo_id}，碎片 #${result.piece.piece_id}，`
-          + `置信度 ${result.piece.confidence.toFixed(2)}。对照右下角缩略图确认。`, "ok");
-    } else {
-      const entries = Object.entries(result.unrecognized);
-      if (!entries.length) {
-        say(`${code} 未找到，且所有碎片都已识别——它确实不在任何一张照片里。`, "err");
-        return;
-      }
-      const [photoId, ids] = entries[0];
-      viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}`
-                 + `&photo_id=${encodeURIComponent(photoId)}&t=${Date.now()}`;
-      const others = entries.slice(1)
-        .map(([id, list]) => `${id}(${list.length})`).join("、");
-      say(`${code} 没认出来。照片 ${photoId} 里这 ${ids.length} 块是未识别的（青色圈出），`
-          + `大概率在里面。` + (others ? ` 其他照片还有：${others}` : ""), "err");
-    }
+    result = await (await fetch(`/api/query?code=${encodeURIComponent(code)}`)).json();
   } catch (error) {
-    say("查询失败：" + error.message, "err");
+    say(`查询失败：${error.message}。确认服务还在运行。`, "bad");
+    return;
   }
+
+  const stamp = Date.now();
+
+  if (result.found) {
+    lastPiece = result.piece;
+    viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}&t=${stamp}`;
+    $("cardThumb").src = `/api/thumbnail?code=${encodeURIComponent(code)}&t=${stamp}`;
+    $("cardCode").textContent = result.code;
+
+    viewEl.addEventListener("load", () => {
+      $("cardWhere").textContent =
+        `照片 ${result.photo_id} · ${zoneOf(result.piece)} · `
+        + `置信度 ${result.piece.confidence.toFixed(2)}`;
+    }, { once: true });
+
+    card.classList.add("is-shown");
+    say(`找到 ${result.code}，在照片 ${result.photo_id} 里，已用洋红圈出。`, "hit");
+    return;
+  }
+
+  const entries = Object.entries(result.unrecognized || {});
+  if (!entries.length) {
+    say(`${code} 不在任何一张照片里，而且所有碎片都读出了编号——它确实没被拍进去。`, "miss");
+    return;
+  }
+
+  const [photoId, ids] = entries[0];
+  viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}`
+             + `&photo_id=${encodeURIComponent(photoId)}&t=${stamp}`;
+  const others = entries.slice(1).map(([id, list]) => `${id} 有 ${list.length} 块`).join("，");
+  say(`没认出 ${code}。照片 ${photoId} 里这 ${ids.length} 块没读出编号（青色圈出），`
+    + `大概率就在其中。` + (others ? ` 另外：${others}。` : ""), "miss");
 }
 
 $("find").onclick = find;
