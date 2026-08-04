@@ -48,6 +48,13 @@ SWEEP_ANGLES: tuple[int, ...] = (0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 30
 # 低于此置信度的识别结果直接判为「未识别」
 MIN_ACCEPT_CONFIDENCE: float = 0.35
 
+# ---------- PaddleOCR 运行时 ----------
+# 模型下载源。国内 bos（百度自家）最快；可选 modelscope / aistudio / huggingface
+PADDLE_MODEL_SOURCE: str = "bos"
+# oneDNN(MKLDNN) 加速。**必须保持 False**：paddle 3.3.1 开着它跑 PP-OCR 检测
+# 模型会抛 ConvertPirAttribute2RuntimeAttribute 未实现。详见 recognize.py。
+PADDLE_ENABLE_MKLDNN: bool = False
+
 # ---------- 渲染 ----------
 # 非目标区域的亮度系数。0.0 全黑，1.0 不变。保留空间定位参照
 DIM_FACTOR: float = 0.45
