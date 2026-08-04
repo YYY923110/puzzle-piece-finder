@@ -226,6 +226,27 @@ class TestRecognizeSweep:
         result = recognize.recognize_sweep(backend, blank_crop)
         assert result.confidence == pytest.approx(0.98)
 
+    def test_stops_early_on_a_very_confident_hit(self, blank_crop):
+        from puzzlefind import config
+
+        responses = [
+            [],
+            [RawDetection("B-403", config.SWEEP_EARLY_EXIT_CONFIDENCE)],
+            [RawDetection("A-111", 1.0)],       # 不该跑到这里
+        ]
+        backend = FakeBackend(responses)
+        result = recognize.recognize_sweep(backend, blank_crop)
+        assert result.code == "B-403"
+        assert backend.calls == 2, "拿到 0.99 之后仍把剩余角度跑完了"
+
+    def test_keeps_sweeping_when_confidence_stays_below_the_exit_bar(self, blank_crop):
+        from puzzlefind import config
+
+        responses = [[RawDetection("B-403", 0.95)]]
+        backend = FakeBackend(responses)
+        recognize.recognize_sweep(backend, blank_crop)
+        assert backend.calls == len(config.SWEEP_ANGLES)
+
 
 QUAD = [[10, 10], [90, 10], [90, 40], [10, 40]]
 

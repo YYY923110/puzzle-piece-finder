@@ -331,6 +331,10 @@ def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
         candidate = _best_snapped(backend.read(rotated), method="sweep", angle=angle)
         if candidate.code is not None and candidate.confidence > best.confidence:
             best = candidate
+        # 提前退出：这么高的置信度再试下去也翻不了盘，而每个角度都要跑一遍
+        # 最贵的检测模型
+        if best.code is not None and best.confidence >= config.SWEEP_EARLY_EXIT_CONFIDENCE:
+            break
     return best
 
 
