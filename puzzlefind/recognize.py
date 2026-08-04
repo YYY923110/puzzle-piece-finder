@@ -164,3 +164,67 @@ def _best_snapped(
 def recognize_direct(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
     """Pass A：整块裁剪图直接喂给 OCR，靠检测器自己处理旋转框。"""
     return _best_snapped(backend.read(crop), method="direct", angle=0)
+
+
+def rotate_expand(image: np.ndarray, angle: int) -> np.ndarray:
+    """绕中心旋转，并扩大画布以免四角被裁掉。
+
+    普通的 warpAffine 会把旋转后超出原尺寸的部分切掉——对我们是致命的，
+    因为编号常印在碎片边缘，一裁就没了。
+    """
+    import cv2
+
+    if angle % 360 == 0:
+        return image
+
+    height, width = image.shape[:2]
+    center = (width / 2.0, height / 2.0)
+    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+
+    cos, sin = abs(matrix[0, 0]), abs(matrix[0, 1])
+    new_width = int(height * sin + width * cos)
+    new_height = int(height * cos + width * sin)
+
+    matrix[0, 2] += new_width / 2.0 - center[0]
+    matrix[1, 2] += new_height / 2.0 - center[1]
+
+    return cv2.warpAffine(
+        image,
+        matrix,
+        (new_width, new_height),
+        flags=cv2.INTER_CUBIC,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=config.CROP_FILL_COLOR,
+    )
+
+
+def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
+    """Pass C：把裁剪图旋转一圈，每个角度都识别一次，取最优。
+
+    「必须能吸附到合法词表」这个约束让穷举的判据非常硬——错误的角度
+    几乎不可能凑出一个合法编号，所以误报率很低。代价只是 CPU 时间，
+    而建索引是一次性的。
+    """
+    best = _NO_RESULT
+    for angle in config.SWEEP_ANGLES:
+        rotated = rotate_expand(crop, angle)
+        candidate = _best_snapped(backend.read(rotated), method="sweep", angle=angle)
+        if candidate.code is not None and candidate.confidence > best.confidence:
+            best = candidate
+    return best
+
+
+def recognize_piece(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
+    """完整识别流程：先 Pass A，置信度不够就升级到 Pass C。
+
+    SWEEP_CONFIDENCE_THRESHOLD 默认设得很激进（宁可多穷举）。跑过
+    真实照片后按 Task 14 的实测数据下调，能大幅缩短建索引时间。
+    """
+    direct = recognize_direct(backend, crop)
+    if direct.code is not None and direct.confidence >= config.SWEEP_CONFIDENCE_THRESHOLD:
+        return direct
+
+    sweep = recognize_sweep(backend, crop)
+    if sweep.code is not None and sweep.confidence > direct.confidence:
+        return sweep
+    return direct

@@ -66,6 +66,81 @@ class TestRecognizeDirect:
         assert result.code == "B-403"
 
 
+class TestRotateExpand:
+    def test_zero_degrees_returns_same_shape(self):
+        image = np.zeros((60, 100, 3), dtype=np.uint8)
+        assert recognize.rotate_expand(image, 0).shape == image.shape
+
+    def test_ninety_degrees_swaps_dimensions(self):
+        image = np.zeros((60, 100, 3), dtype=np.uint8)
+        rotated = recognize.rotate_expand(image, 90)
+        assert rotated.shape[0] == 100
+        assert rotated.shape[1] == 60
+
+    def test_forty_five_degrees_expands_canvas_without_clipping(self):
+        image = np.zeros((60, 100, 3), dtype=np.uint8)
+        rotated = recognize.rotate_expand(image, 45)
+        assert rotated.shape[0] > 60
+        assert rotated.shape[1] > 100
+
+
+class TestRecognizeSweep:
+    def test_finds_code_at_a_later_angle(self, blank_crop):
+        from puzzlefind import config
+
+        # 前两个角度读不出，第三个角度读出——模拟只有摆正后才认得出
+        responses = [[], [RawDetection("???", 0.9)], [RawDetection("B-403", 0.95)]]
+        backend = FakeBackend(responses)
+        result = recognize.recognize_sweep(backend, blank_crop)
+        assert result.code == "B-403"
+        assert result.method == "sweep"
+        assert result.angle == config.SWEEP_ANGLES[2]
+
+    def test_tries_every_angle_when_nothing_hits(self, blank_crop):
+        from puzzlefind import config
+
+        backend = FakeBackend([[]])
+        result = recognize.recognize_sweep(backend, blank_crop)
+        assert result.code is None
+        assert backend.calls == len(config.SWEEP_ANGLES)
+
+    def test_keeps_highest_confidence_across_angles(self, blank_crop):
+        responses = [
+            [RawDetection("B-403", 0.60)],
+            [RawDetection("B-403", 0.98)],
+            [RawDetection("B-403", 0.71)],
+        ]
+        backend = FakeBackend(responses)
+        result = recognize.recognize_sweep(backend, blank_crop)
+        assert result.confidence == pytest.approx(0.98)
+
+
+class TestRecognizePiece:
+    def test_high_confidence_direct_hit_skips_the_sweep(self, blank_crop):
+        backend = FakeBackend([[RawDetection("B-403", 0.99)]])
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "direct"
+        assert backend.calls == 1
+
+    def test_low_confidence_direct_hit_escalates_to_sweep(self, blank_crop):
+        # 首次调用置信度低于阈值 → 进入穷举，穷举里读出高分结果
+        responses = [
+            [RawDetection("B-403", 0.50)],   # direct
+            [RawDetection("B-403", 0.50)],   # sweep angle 0
+            [RawDetection("B-403", 0.97)],   # sweep angle 1
+        ]
+        backend = FakeBackend(responses)
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "sweep"
+        assert backend.calls > 1
+
+    def test_returns_no_result_when_every_pass_fails(self, blank_crop):
+        backend = FakeBackend([[]])
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.code is None
+        assert result.method == "none"
+
+
 @pytest.mark.ocr
 class TestPaddleBackendIntegration:
     def test_reads_rendered_code_from_synthetic_image(self):
