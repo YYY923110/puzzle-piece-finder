@@ -84,7 +84,8 @@ def main() -> int:
     print(f"总块数        {total}")
     print(f"已识别        {hit}  ({hit / total:.1%})" if total else "已识别 0")
     print(f"  Pass A 直接 {methods.get('direct', 0)}")
-    print(f"  Pass C 穷举 {methods.get('sweep', 0)}")
+    print(f"  Pass C 按行 {methods.get('line', 0)}   (复用检测框、只重跑 rec 的快路径)")
+    print(f"  Pass C 穷举 {methods.get('sweep', 0)}   (det 没给出框时的回退)")
     print(f"  冲突降级    {methods.get('conflict', 0)}")
     print(f"未识别        {len(index.unrecognized)}")
     print(f"耗时          {elapsed:.1f}s  ({elapsed / max(1, total):.2f}s/块)")
@@ -157,19 +158,22 @@ def main() -> int:
         print("  · 若是两块碎片粘在一张裁剪图里 → 调分割，不是调识别")
         print("  · 若是形近误读（B-529 读成 B-520 之类）→ 提高 CROP_TARGET_LONG_EDGE，")
         print("    或者下次每张少拍几块，让字更大")
-    elif direct / total > 0.85:
-        print(f"Pass A 覆盖率 {direct / total:.0%}，很高。可以把")
-        print(f"config.SWEEP_CONFIDENCE_THRESHOLD 从 {config.SWEEP_CONFIDENCE_THRESHOLD}")
-        print("下调到 0.75 左右，建索引会快一倍以上。")
-    elif methods.get("sweep", 0) > direct:
-        print("穷举承担了主要工作量——说明 PaddleOCR 的检测器在这批图上")
-        print("确实处理不好任意角度。保持高阈值，并考虑把 SWEEP_ANGLES")
-        print("加密到每 15 度一档以进一步提升覆盖率。")
+    elif methods.get("sweep", 0) >= max(2, total * 0.1):
+        # 耗时几乎全在这里：全量穷举要跑 12 遍最贵的检测模型，而按行识别
+        # 只重跑 rec，便宜约 77 倍。穷举块数多 = 检测器在这些碎片上没给出框。
+        sweep_n = methods.get("sweep", 0)
+        print(f"有 {sweep_n}/{total} 块走了**全量角度穷举**，这是目前的耗时大头——")
+        print("每块要跑 12 遍检测模型，比按行识别贵约 77 倍。")
+        print("穷举只在「检测器压根没给出文字框」时才会触发，所以要查的是检测失败：")
+        print("  · 看 crops/ 里对应的图，字是不是太小或太糊 → 每张少拍几块")
+        print("  · 编号是不是被画幅或邻块切掉了一截")
     else:
-        print(f"Pass A 覆盖率 {direct / total:.0%}，穷举兜底 "
-              f"{methods.get('sweep', 0) / total:.0%}，配比正常，阈值先不用动。")
-        print("想提速的话，看上面的置信度分布：把 SWEEP_CONFIDENCE_THRESHOLD")
-        print("压到「25% 分位」附近，就能让大部分直接命中的碎片跳过穷举。")
+        line_n = methods.get("line", 0)
+        print(f"Pass A 直读 {direct / total:.0%}，按行识别 {line_n / total:.0%}，"
+              f"全量穷举 {methods.get('sweep', 0) / total:.0%}，配比正常。")
+        print("耗时已经由检测模型主导（占单次识别 92%），而每块只跑一次检测，")
+        print("没有明显的浪费了。SWEEP_CONFIDENCE_THRESHOLD 在合格照片上基本空转，")
+        print("调它不会有可观收益——下一个杠杆是多进程，或彻底绕开检测模型。")
     if total and hit / total < 0.7:
         print("识别率偏低。优先排查顺序：")
         print("  a) 看 crops/ 里的字够不够大 → 下次每张少拍点碎片")

@@ -810,7 +810,10 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
         assert result.method == "line"
         assert result.code == "B-403"
         assert backend.calls == 1, "不该再跑一遍昂贵的全量穷举"
-        assert backend.line_calls == 1
+        # 0.98 低于 SWEEP_EARLY_EXIT_CONFIDENCE(0.99)，所以两个朝向都试了——
+        # 这是对的。够格收工的门槛是 SWEEP_CONFIDENCE_THRESHOLD(0.90)，
+        # 它决定的是「要不要回退到全量穷举」，与提前退出是两回事。
+        assert backend.line_calls == 2
 
     def test_falls_back_to_the_full_sweep_when_the_line_path_fails(self, blank_crop):
         backend = FakeLineBackend(
