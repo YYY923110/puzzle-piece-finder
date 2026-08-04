@@ -1,5 +1,28 @@
 # 拼图碎片编号查找器 Implementation Plan
 
+> ## ⚠️ 本文档已执行完毕，且其中的代码有 6 处是错的
+>
+> **状态：2026-08-03 全部 14 个 Task 已实现并提交。这份 plan 现在是历史存档。**
+>
+> 执行过程中，plan 里给出的代码被它**自己的测试**逼出了 6 处缺陷。
+> 下面的代码块保持原样未改，以便对照当时的判断——
+> **要看能跑的版本请直接读 `puzzlefind/` 下的源码，不要从这里复制。**
+>
+> | # | 位置 | 缺陷 | 实际修法 |
+> |---|---|---|---|
+> | 1 | Task 3 `split_blob` | 二分方向反了。抬高距离变换阈值会**淹掉**碎片间的峡谷、让种子**变多**，代码却往反方向收边界，永远收敛不了 | 交换两个分支 |
+> | 2 | Task 3 面积先验 | `median_blob_area` 假设「多数连通块是单块」，只有一个粘连团时中位数恒等于它自己，比值恒为 1.00，切分永不触发 | 新增 `peak_count` / `unit_piece_area` |
+> | 3 | 修复 2 引入的回归 | `peak_count` 在**真实**拼图碎片上恒返回 3（每个凸起都是一个距离变换山峰），单块面积被压低 3 倍，**50 块碎片被切成 96 个轮廓**。合成 fixture 全是圆形，圆没有凸起，测不出来 | 连通块 ≥5 时改用面积中位数；补 `separated_puzzle_pieces` 带凸起 fixture |
+> | 4 | Task 7 `resolve` | 离群规则**永远不可能触发**：区间用 min/max 从待过滤的同一批数据里取，离群值总是自己的边界 | 新增 `vocabulary.robust_ranges`（四分位围栏） |
+> | 5 | Task 1 `bootstrap_ranges` | 默认 `min_samples=3` 与 plan 自己的测试矛盾（该测试要求 2 样本前缀出区间） | 默认改为 2 |
+> | 6 | Task 4 `contour_bbox` 测试 | 期望值 off-by-one。`cv2.boundingRect` 在 4.x 和 5.x 上都返回**含两端**的宽高 | 改测试，不改实现 |
+>
+> 另外还有 3 处**运行时**问题 plan 无从预知，已在源码注释中说明：
+> paddlex 的 1 秒模型源探测超时、paddle 3.3.1 的 oneDNN 崩溃、代理 TUN 网卡导致局域网地址误报。
+>
+> 实测结果与参数决策依据见 [`docs/tuning-log.md`](../../tuning-log.md)，
+> 上手运行见 [`README.md`](../../../README.md)。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **先读 spec：** [`../specs/2026-08-03-puzzle-piece-finder.md`](../specs/2026-08-03-puzzle-piece-finder.md)
