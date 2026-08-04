@@ -7,6 +7,7 @@ opencv 是 headless 版，没有 imshow，所以一切靠写文件观察。
 """
 from __future__ import annotations
 
+import json
 import sys
 import time
 from collections import Counter
@@ -88,6 +89,42 @@ def main() -> int:
     print(f"未识别        {len(index.unrecognized)}")
     print(f"耗时          {elapsed:.1f}s  ({elapsed / max(1, total):.2f}s/块)")
 
+    # 把索引落盘。一次标定要跑好几分钟，结果不留下来就只能重跑。
+    index_path = debug / "index.json"
+    index_path.write_text(
+        json.dumps(index.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    print(f"\n索引已存到 {index_path}（可直接打开看每块碎片读成了什么）")
+
+    # 冲突降级的明细。这些碎片 OCR 其实读出来了，是被唯一性/离群规则否掉的，
+    # 跟「压根没读出来」是完全不同的失败模式，排查方向也不同。
+    demoted = [p for p in index.pieces if p.method == "conflict"]
+    if demoted:
+        print(f"\n=== 被冲突消解降级的 {len(demoted)} 块 ===")
+        kept = {p.code: p for p in index.recognized}
+        for piece in demoted:
+            raw = piece.raw_text or ""
+            snapped, _ = vocabulary.snap(raw) if raw else (None, 0.0)
+            winner = kept.get(snapped) if snapped else None
+            detail = (
+                f"被 #{winner.piece_id}(置信度 {winner.confidence:.3f}) 挤掉"
+                if winner else "原因见 raw_text"
+            )
+            print(f"  #{piece.piece_id:>3} 原始读数 {raw!r} → {snapped} : {detail}")
+        print("  这些块要么是误读撞了车，要么是粘连导致一张裁剪图里有两个编号。")
+        print("  对照 debug/<照片>/crops/ 里对应编号的图肉眼判一下是哪种。")
+
+    # 置信度分布：直接决定 SWEEP_CONFIDENCE_THRESHOLD 该定在哪
+    direct_confs = sorted(p.confidence for p in index.pieces if p.method == "direct")
+    if direct_confs:
+        n = len(direct_confs)
+        print(f"\n=== Pass A 命中时的置信度分布（{n} 块）===")
+        print(f"  最低 {direct_confs[0]:.3f}  25% {direct_confs[n//4]:.3f}  "
+              f"中位 {direct_confs[n//2]:.3f}  最高 {direct_confs[-1]:.3f}")
+        print(f"  当前阈值 {config.SWEEP_CONFIDENCE_THRESHOLD} 之下的有 "
+              f"{sum(1 for c in direct_confs if c < config.SWEEP_CONFIDENCE_THRESHOLD)} 块"
+              f"——它们本来直接读对了，却仍被迫跑完整轮穷举。")
+
     # 自举区间：这是 spec §4「各字母组的数字区间未知」那个悬案的答案
     codes = [p.code for p in index.recognized if p.code]
     print("\n=== 自举出的编号区间 ===")
@@ -110,14 +147,29 @@ def main() -> int:
 
     print("\n=== 调参建议 ===")
     direct = methods.get("direct", 0)
-    if total and direct / total > 0.85:
+    if not total:
+        print("一块碎片都没分割出来，先看 01_mask.png。")
+    elif demoted and len(demoted) >= max(2, total * 0.1):
+        # 这一条要排在覆盖率建议前面：降级块数多时，它是最大的损失来源，
+        # 而且调 SWEEP_CONFIDENCE_THRESHOLD 对它一点用都没有。
+        print(f"最大的损失来源是冲突降级（{len(demoted)}/{total} 块），不是识别不出来。")
+        print("这些碎片 OCR 都读出编号了，是撞了车才被丢掉。优先查上面那份明细：")
+        print("  · 若是两块碎片粘在一张裁剪图里 → 调分割，不是调识别")
+        print("  · 若是形近误读（B-529 读成 B-520 之类）→ 提高 CROP_TARGET_LONG_EDGE，")
+        print("    或者下次每张少拍几块，让字更大")
+    elif direct / total > 0.85:
         print(f"Pass A 覆盖率 {direct / total:.0%}，很高。可以把")
         print(f"config.SWEEP_CONFIDENCE_THRESHOLD 从 {config.SWEEP_CONFIDENCE_THRESHOLD}")
         print("下调到 0.75 左右，建索引会快一倍以上。")
-    elif total and methods.get("sweep", 0) > direct:
+    elif methods.get("sweep", 0) > direct:
         print("穷举承担了主要工作量——说明 PaddleOCR 的检测器在这批图上")
         print("确实处理不好任意角度。保持高阈值，并考虑把 SWEEP_ANGLES")
         print("加密到每 15 度一档以进一步提升覆盖率。")
+    else:
+        print(f"Pass A 覆盖率 {direct / total:.0%}，穷举兜底 "
+              f"{methods.get('sweep', 0) / total:.0%}，配比正常，阈值先不用动。")
+        print("想提速的话，看上面的置信度分布：把 SWEEP_CONFIDENCE_THRESHOLD")
+        print("压到「25% 分位」附近，就能让大部分直接命中的碎片跳过穷举。")
     if total and hit / total < 0.7:
         print("识别率偏低。优先排查顺序：")
         print("  a) 看 crops/ 里的字够不够大 → 下次每张少拍点碎片")
