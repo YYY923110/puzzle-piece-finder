@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "puzzlefind"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "opencv-python-headless>=5.0",
+    "numpy>=2.0",
+    "paddlepaddle==3.3.1",
+    "paddleocr>=3.0",
+    "fastapi>=0.141",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+puzzlefind = "puzzlefind.cli:main"
+
+[tool.setuptools]
+packages = ["puzzlefind"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["ocr: 需要加载 PaddleOCR 的慢速测试"]
+addopts = "-q"
