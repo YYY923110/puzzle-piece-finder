@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -43,6 +43,20 @@ class RecogResult:
 class OcrBackend(Protocol):
     def read(self, image: np.ndarray) -> list[RawDetection]:
         """对整张图做 OCR，返回全部检测结果。"""
+        ...
+
+
+@runtime_checkable
+class LineOcrBackend(Protocol):
+    """**可选**能力：只跑识别模型，不跑检测模型。
+
+    刻意做成独立于 OcrBackend 的第二个协议，而不是往 OcrBackend 里加方法。
+    spec §6 承诺「换识别后端只需实现 read()」，把这个方法设成必需会毁掉
+    那个承诺。不实现它的后端一样能用，只是 Pass C 会走昂贵的全量角度穷举。
+    """
+
+    def read_line(self, image: np.ndarray) -> RawDetection:
+        """对一条**已摆正**的文字行做识别，跳过检测模型。"""
         ...
 
 
@@ -274,6 +288,34 @@ def deskew_quad(image: np.ndarray, quad: list[list[int]]) -> np.ndarray:
 
     # warpPerspective / rot90 之后可能不是连续内存，Paddle 要求连续
     return np.ascontiguousarray(line)
+
+
+def recognize_line_sweep(
+    backend: LineOcrBackend, crop: np.ndarray, quad: list[list[int]]
+) -> RecogResult:
+    """Pass C 的快路径：按检测框裁出文字行，只重跑识别模型。
+
+    为什么这条路快得这么离谱：单次完整 predict 的 1.71 秒里，检测模型占
+    1.485 秒（92%），识别模型只占 0.129 秒。而检测框在 Pass A 就已经拿到了，
+    重跑 12 遍检测纯属浪费。实测 20.5 秒 → 0.265 秒，**77 倍**。
+
+    摆正之后只剩正反歧义，所以只试两个朝向，不是 12 个角度。
+    """
+    import cv2
+
+    line = deskew_quad(crop, quad)
+    best = _NO_RESULT
+
+    for orientation in config.LINE_ORIENTATIONS:
+        image = cv2.rotate(line, cv2.ROTATE_180) if orientation == 180 else line
+        detection = backend.read_line(np.ascontiguousarray(image))
+        candidate = _best_snapped([detection], method="line", angle=orientation)
+        if candidate.code is not None and candidate.confidence > best.confidence:
+            best = candidate
+        if best.code is not None and best.confidence >= config.SWEEP_EARLY_EXIT_CONFIDENCE:
+            break
+
+    return best
 
 
 def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:

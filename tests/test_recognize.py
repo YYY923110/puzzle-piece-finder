@@ -23,6 +23,30 @@ class FakeBackend:
         return result
 
 
+class FakeLineBackend(FakeBackend):
+    """额外实现可选的 read_line 的假后端。
+
+    read 与 read_line 各自独立计数，测试才能分辨「跑的是便宜的 rec 路径
+    还是昂贵的全量穷举」——这正是本次改造要证明的事。
+    """
+
+    def __init__(
+        self,
+        responses: list[list[RawDetection]],
+        line_responses: list[RawDetection],
+    ):
+        super().__init__(responses)
+        self.line_responses = line_responses
+        self.line_calls = 0
+
+    def read_line(self, image: np.ndarray) -> RawDetection:
+        result = self.line_responses[
+            min(self.line_calls, len(self.line_responses) - 1)
+        ]
+        self.line_calls += 1
+        return result
+
+
 @pytest.fixture
 def blank_crop() -> np.ndarray:
     return np.full((100, 100, 3), 200, dtype=np.uint8)
@@ -201,6 +225,52 @@ class TestRecognizeSweep:
         backend = FakeBackend(responses)
         result = recognize.recognize_sweep(backend, blank_crop)
         assert result.confidence == pytest.approx(0.98)
+
+
+QUAD = [[10, 10], [90, 10], [90, 40], [10, 40]]
+
+
+class TestRecognizeLineSweep:
+    def test_reads_code_from_the_upright_orientation(self, blank_crop):
+        backend = FakeLineBackend([[]], [RawDetection("B-403", 0.98)])
+        result = recognize.recognize_line_sweep(backend, blank_crop, QUAD)
+        assert result.code == "B-403"
+        assert result.method == "line"
+        assert result.angle == 0
+
+    def test_falls_through_to_the_flipped_orientation(self, blank_crop):
+        backend = FakeLineBackend(
+            [[]],
+            [RawDetection("EOP-8", 0.40), RawDetection("B-403", 0.97)],
+        )
+        result = recognize.recognize_line_sweep(backend, blank_crop, QUAD)
+        assert result.code == "B-403"
+        assert result.angle == 180
+
+    def test_tries_both_orientations_when_nothing_snaps(self, blank_crop):
+        backend = FakeLineBackend([[]], [RawDetection("QWERTY", 0.99)])
+        result = recognize.recognize_line_sweep(backend, blank_crop, QUAD)
+        assert result.code is None
+        assert backend.line_calls == 2
+
+    def test_stops_early_on_a_very_confident_read(self, blank_crop):
+        from puzzlefind import config
+
+        backend = FakeLineBackend(
+            [[]],
+            [
+                RawDetection("B-403", config.SWEEP_EARLY_EXIT_CONFIDENCE),
+                RawDetection("A-111", 1.0),
+            ],
+        )
+        result = recognize.recognize_line_sweep(backend, blank_crop, QUAD)
+        assert result.code == "B-403"
+        assert backend.line_calls == 1, "拿到高置信度结果后不该再试翻转"
+
+    def test_never_calls_the_expensive_full_read(self, blank_crop):
+        backend = FakeLineBackend([[]], [RawDetection("B-403", 0.98)])
+        recognize.recognize_line_sweep(backend, blank_crop, QUAD)
+        assert backend.calls == 0, "按行识别不该触碰检测模型"
 
 
 class TestRecognizePiece:
