@@ -319,6 +319,69 @@ class TestRecognizePiece:
         assert result.code is None
         assert result.method == "none"
 
+    def test_low_confidence_direct_uses_the_line_path_when_a_quad_is_available(
+        self, blank_crop
+    ):
+        backend = FakeLineBackend(
+            [[RawDetection("B-403", 0.50, QUAD)]],      # Pass A：分低，但有框
+            [RawDetection("B-403", 0.98)],              # 按行识别：读准了
+        )
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "line"
+        assert result.code == "B-403"
+        assert backend.calls == 1, "不该再跑一遍昂贵的全量穷举"
+        # 0.98 低于 SWEEP_EARLY_EXIT_CONFIDENCE(0.99)，所以两个朝向都试了——
+        # 这是对的。够格收工的门槛是 SWEEP_CONFIDENCE_THRESHOLD(0.90)，
+        # 它决定的是「要不要回退到全量穷举」，与提前退出是两回事。
+        assert backend.line_calls == 2
+
+    def test_falls_back_to_the_full_sweep_when_the_line_path_fails(self, blank_crop):
+        backend = FakeLineBackend(
+            [
+                [RawDetection("B-403", 0.50, QUAD)],   # Pass A
+                [RawDetection("B-403", 0.96)],         # 全量穷举的第一个角度
+            ],
+            [RawDetection("QWERTY", 0.99)],            # 按行识别：吸附不上
+        )
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "sweep"
+        assert result.code == "B-403"
+        assert backend.line_calls == 2, "回退前应把两个朝向都试过"
+        assert backend.calls > 1
+
+    def test_falls_back_to_the_full_sweep_when_there_is_no_quad(self, blank_crop):
+        backend = FakeLineBackend(
+            [
+                [RawDetection("B-403", 0.50)],         # Pass A：分低且**没有框**
+                [RawDetection("B-403", 0.96)],
+            ],
+            [RawDetection("B-403", 0.99)],
+        )
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "sweep"
+        assert backend.line_calls == 0, "没有框就不该走按行识别"
+
+    def test_backend_without_read_line_still_works(self, blank_crop):
+        """不实现可选协议的后端必须照常工作——这是 spec §6 的架构承诺。"""
+        backend = FakeBackend(
+            [
+                [RawDetection("B-403", 0.50, QUAD)],
+                [RawDetection("B-403", 0.96)],
+            ]
+        )
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "sweep"
+        assert result.code == "B-403"
+
+    def test_high_confidence_direct_still_skips_everything(self, blank_crop):
+        backend = FakeLineBackend(
+            [[RawDetection("B-403", 0.99, QUAD)]], [RawDetection("A-111", 1.0)]
+        )
+        result = recognize.recognize_piece(backend, blank_crop)
+        assert result.method == "direct"
+        assert backend.calls == 1
+        assert backend.line_calls == 0
+
 
 @pytest.mark.ocr
 class TestPaddleBackendIntegration:

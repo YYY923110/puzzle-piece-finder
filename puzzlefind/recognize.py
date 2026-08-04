@@ -339,16 +339,32 @@ def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
 
 
 def recognize_piece(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
-    """完整识别流程：先 Pass A，置信度不够就升级到 Pass C。
+    """完整识别流程，四级降级。
 
-    SWEEP_CONFIDENCE_THRESHOLD 默认设得很激进（宁可多穷举）。跑过
-    真实照片后按 Task 14 的实测数据下调，能大幅缩短建索引时间。
+    1. Pass A 直读。置信度够就收工——合格照片上这条吃下约 2/3 的碎片。
+    2. Pass A 拿到了检测框、且后端支持按行识别 → 只重跑 rec 模型试正反两个朝向。
+       这是本管线最大的提速来源：det 占单次识别 92% 的耗时，而框在第 1 步
+       就已经有了，没必要为 12 个角度重跑 12 遍检测。
+    3. 上面都不行 → 回退到全量角度穷举（det 完全没给出框时唯一的出路）。
+    4. 取三者里最好的。
+
+    第 3 步是识别率的下限保证：走不通快路径的碎片一个不少地回到老路上，
+    所以这次改造**只可能持平或变好**。不要为了提速把它砍掉。
     """
-    direct = recognize_direct(backend, crop)
-    if direct.code is not None and direct.confidence >= config.SWEEP_CONFIDENCE_THRESHOLD:
-        return direct
+    detections = backend.read(crop)
+    best = _best_snapped(detections, method="direct", angle=0)
+    if best.code is not None and best.confidence >= config.SWEEP_CONFIDENCE_THRESHOLD:
+        return best
+
+    quad = best_poly(detections)
+    if quad is not None and isinstance(backend, LineOcrBackend):
+        line = recognize_line_sweep(backend, crop, quad)
+        if line.code is not None and line.confidence > best.confidence:
+            best = line
+        if best.code is not None and best.confidence >= config.SWEEP_CONFIDENCE_THRESHOLD:
+            return best
 
     sweep = recognize_sweep(backend, crop)
-    if sweep.code is not None and sweep.confidence > direct.confidence:
-        return sweep
-    return direct
+    if sweep.code is not None and sweep.confidence > best.confidence:
+        best = sweep
+    return best
