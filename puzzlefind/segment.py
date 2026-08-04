@@ -219,3 +219,48 @@ def extract_contours(bgr: np.ndarray) -> list[np.ndarray]:
         else:
             result.extend(split_blob(shape, blob, expected))
     return result
+
+
+def contour_bbox(contour: np.ndarray) -> tuple[int, int, int, int]:
+    """轮廓的紧包围盒 (x, y, w, h)。"""
+    x, y, w, h = cv2.boundingRect(contour)
+    return int(x), int(y), int(w), int(h)
+
+
+def crop_piece(bgr: np.ndarray, contour: np.ndarray) -> np.ndarray:
+    """裁出单块碎片并放大到识别友好的尺寸。
+
+    三个动作，每个都有目的：
+    1. 用轮廓做掩膜，把邻块的像素替换成中性灰——否则相邻碎片上的
+       编号会混进这块的裁剪图，OCR 会读出两个编号。
+    2. 按包围盒裁剪并外扩少量边距，给检测器留出上下文。
+    3. 放大到 CROP_TARGET_LONG_EDGE。这是整条管线里对识别率影响
+       最大的一步：PP-OCR 会把文字行缩放到固定高度 48px，源图字符
+       太小就等于喂给模型一张糊图。
+    """
+    height, width = bgr.shape[:2]
+    x, y, w, h = contour_bbox(contour)
+
+    pad = config.CROP_PADDING
+    x0, y0 = max(0, x - pad), max(0, y - pad)
+    x1, y1 = min(width, x + w + pad), min(height, y + h + pad)
+
+    mask = np.zeros((height, width), dtype=np.uint8)
+    cv2.drawContours(mask, [contour], -1, 255, thickness=-1)
+
+    filled = np.full_like(bgr, config.CROP_FILL_COLOR, dtype=np.uint8)
+    composited = np.where(mask[:, :, None] == 255, bgr, filled)
+    crop = composited[y0:y1, x0:x1]
+
+    if crop.size == 0:
+        return crop
+
+    long_edge = max(crop.shape[:2])
+    scale = config.CROP_TARGET_LONG_EDGE / long_edge
+    # 放大用 INTER_CUBIC（保边缘锐度），缩小用 INTER_AREA（抗锯齿）
+    interpolation = cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA
+    return cv2.resize(
+        crop,
+        (max(1, round(crop.shape[1] * scale)), max(1, round(crop.shape[0] * scale))),
+        interpolation=interpolation,
+    )

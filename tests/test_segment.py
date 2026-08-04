@@ -101,3 +101,57 @@ class TestExtractContours:
     def test_empty_image_yields_no_contours(self):
         blank = np.zeros((200, 200, 3), dtype=np.uint8)
         assert segment.extract_contours(blank) == []
+
+
+class TestContourBbox:
+    def test_returns_tight_bounding_box(self):
+        contour = np.array(
+            [[[10, 20]], [[10, 60]], [[50, 60]], [[50, 20]]], dtype=np.int32
+        )
+        # 宽高是「像素含两端」的：列 10..50 共 41 列，不是 50-10。
+        # cv2.boundingRect 在 4.x 和 5.x 上都是这个语义，crop_piece 的
+        # x+w 切片也依赖它才能把最后一列裁进去。
+        assert segment.contour_bbox(contour) == (10, 20, 41, 41)
+
+
+class TestCropPiece:
+    def test_crop_long_edge_matches_target(self, separated_pieces):
+        from puzzlefind import config
+
+        image, _ = separated_pieces
+        contour = segment.extract_contours(image)[0]
+        crop = segment.crop_piece(image, contour)
+        assert max(crop.shape[:2]) == config.CROP_TARGET_LONG_EDGE
+
+    def test_crop_is_three_channel_bgr(self, separated_pieces):
+        image, _ = separated_pieces
+        contour = segment.extract_contours(image)[0]
+        crop = segment.crop_piece(image, contour)
+        assert crop.ndim == 3 and crop.shape[2] == 3
+
+    def test_area_outside_contour_is_fill_color(self, separated_pieces):
+        from puzzlefind import config
+
+        image, _ = separated_pieces
+        contour = segment.extract_contours(image)[0]
+        crop = segment.crop_piece(image, contour)
+        # 圆形碎片的裁剪图，四角必在轮廓之外
+        corner = tuple(int(v) for v in crop[2, 2])
+        assert corner == config.CROP_FILL_COLOR
+
+    def test_center_preserves_original_piece_color(self, separated_pieces):
+        image, _ = separated_pieces
+        contour = segment.extract_contours(image)[0]
+        crop = segment.crop_piece(image, contour)
+        h, w = crop.shape[:2]
+        center = crop[h // 2, w // 2]
+        # 合成碎片是浅色 (235,233,228)，中心应仍是浅色
+        assert int(center.min()) > 180
+
+    def test_contour_touching_image_edge_does_not_crash(self):
+        canvas = np.full((200, 200, 3), 18, dtype=np.uint8)
+        cv2.circle(canvas, (5, 5), 40, (235, 233, 228), thickness=-1)
+        contours = segment.extract_contours(canvas)
+        assert len(contours) == 1
+        crop = segment.crop_piece(canvas, contours[0])
+        assert crop.size > 0
