@@ -3,7 +3,7 @@
 opencv 是 headless 版，没有 imshow，所以一切靠写文件观察。
 
 用法:
-    python scripts/calibrate.py data/photos/real1.jpg
+    python scripts/calibrate.py data/photos/桌面1.jpg
 """
 from __future__ import annotations
 
@@ -131,7 +131,7 @@ def main() -> int:
               f"{sum(1 for c in direct_confs if c < config.SWEEP_CONFIDENCE_THRESHOLD)} 块"
               f"——它们本来直接读对了，却仍被迫跑完整轮穷举。")
 
-    # 自举区间：这是 spec §4「各字母组的数字区间未知」那个悬案的答案
+    # 自举区间：各字母组的实际数字区间未知，只能从识别结果里反推
     codes = [p.code for p in index.recognized if p.code]
     print("\n=== 自举出的编号区间 ===")
     plain = vocabulary.bootstrap_ranges(codes)

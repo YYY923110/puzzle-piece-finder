@@ -1,7 +1,7 @@
 """建索引耗时基准。改识别策略前后各跑一次，用于对照。
 
 跑法:
-    .\\.venv\\Scripts\\python.exe scripts\\benchmark.py data\\photos\\real6.jpg
+    .\\.venv\\Scripts\\python.exe scripts\\benchmark.py data\\photos\\桌面1.jpg
 """
 from __future__ import annotations
 

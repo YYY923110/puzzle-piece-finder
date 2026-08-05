@@ -18,9 +18,10 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-# 默认端口。不用 8000：本机 8000 已被另一个 python 进程占着，而 Windows
-# 允许两个进程绑同一端口且不报错，请求会随机落到其中一个——这种故障
-# 看起来像「代码没生效」，极难排查。被占时 find_free_port 会往上顺延。
+# 默认端口。刻意避开 8000：它是太多框架的默认值，撞上的概率很高，
+# 而 Windows 允许两个进程绑同一端口且不报错，请求会随机落到其中一个
+# ——这种故障看起来像「代码没生效」，极难排查。
+# 被占时 find_free_port 会往上顺延。
 PORT = 8791
 
 

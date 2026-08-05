@@ -29,7 +29,7 @@ class TestPickLanIp:
         assert server._pick_lan_ip([]) == "127.0.0.1"
 
     def test_wsl_virtual_adapter_loses_to_wlan(self):
-        """本机实测的真实情形：WSL 的 172.22.48.1 和 WLAN 的 192.168.2.119 并存。"""
+        """实测遇到过的真实情形：WSL 的 172.22.x 和无线网卡的 192.168.x 并存。"""
         assert server._pick_lan_ip(["172.22.48.1", "192.168.2.119"]) == "192.168.2.119"
 
     def test_172_outside_the_private_block_is_rejected(self):

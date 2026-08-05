@@ -362,7 +362,7 @@ class TestRecognizePiece:
         assert backend.line_calls == 0, "没有框就不该走按行识别"
 
     def test_backend_without_read_line_still_works(self, blank_crop):
-        """不实现可选协议的后端必须照常工作——这是 spec §6 的架构承诺。"""
+        """不实现可选协议的后端必须照常工作——这是 docs/design.md §9 的架构承诺。"""
         backend = FakeBackend(
             [
                 [RawDetection("B-403", 0.50, QUAD)],
