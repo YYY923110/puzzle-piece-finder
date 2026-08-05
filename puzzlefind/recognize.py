@@ -262,7 +262,13 @@ def _best_snapped(
 
 
 def recognize_direct(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
-    """Pass A：整块裁剪图直接喂给 OCR，靠检测器自己处理旋转框。"""
+    """Pass A：整块裁剪图直接喂给 OCR，靠检测器自己处理旋转框。
+
+    生产路径**不调用它**——`recognize_piece` 把这两步拆开写了，因为它还要
+    留住 `detections` 去取检测框（Pass C 的快路径靠那个框）。这个函数是
+    Pass A 的独立测试接缝：测吸附、低置信度拒绝、多检测取最优这些行为时，
+    不必把整条四级降级流程拖进来。删它之前先看 tests/test_recognize.py。
+    """
     return _best_snapped(backend.read(crop), method="direct", angle=0)
 
 

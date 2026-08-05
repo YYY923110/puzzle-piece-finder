@@ -1,5 +1,14 @@
 # OCR 提速实施方案（杠杆 1 + 杠杆 2）
 
+> ## ⚠️ 本文档已执行完毕，是历史存档
+>
+> 2026-08-04 全部实现并提交（`f7bcc68`..`a51313a`）。实测 **2.94x**（385 s → 131 s，
+> 识别率不变），收益全部来自 `SWEEP_EARLY_EXIT_CONFIDENCE`。
+> 量过但无效的杠杆（批量推理、关方向分类、oneDNN、GPU…）记在
+> [调参日志](../../tuning-log.md)，**别再试一遍**。
+>
+> 注意：这里的耗时数字是 2026-08-04 裁剪掩膜改动**之前**测的。当前实测见 README。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把建索引耗时降到目前的 1/4 以下，且**识别率一块不掉**。
