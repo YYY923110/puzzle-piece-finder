@@ -51,8 +51,9 @@ class LineOcrBackend(Protocol):
     """**可选**能力：只跑识别模型，不跑检测模型。
 
     刻意做成独立于 OcrBackend 的第二个协议，而不是往 OcrBackend 里加方法。
-    spec §6 承诺「换识别后端只需实现 read()」，把这个方法设成必需会毁掉
-    那个承诺。不实现它的后端一样能用，只是 Pass C 会走昂贵的全量角度穷举。
+    架构上承诺过「换识别后端只需实现 read()」（见 docs/design.md §9），
+    把这个方法设成必需会毁掉那个承诺。不实现它的后端一样能用，
+    只是 Pass C 会走昂贵的全量角度穷举。
     """
 
     def read_line(self, image: np.ndarray) -> RawDetection:
@@ -103,20 +104,13 @@ class PaddleBackend:
             # 不是扫描文档，那两个模块只会拖慢速度并引入误判。
             # 保留 textline 方向分类——它负责 180° 正反歧义。
             #
-            # enable_mkldnn 必须显式关掉（默认是开的）。开着时 paddle 3.3.1
-            # 在本机 CPU 上跑检测模型会直接抛：
-            #   NotImplementedError: (Unimplemented)
-            #   ConvertPirAttribute2RuntimeAttribute not support
-            #   [pir::ArrayAttribute<pir::DoubleAttribute>]
-            # 这是 oneDNN 算子在 PIR 执行器下的缺口，不是我们能绕的，
-            # 只能关掉 oneDNN 加速。代价是 CPU 推理慢一些——而建索引是
-            # 一次性开销，这个代价可以接受。
+            # 不指定 device：PaddleOCR 的默认值是自动选择，装了 GPU 版
+            # paddle 且能看到显卡时直接走 gpu:0。
             self._ocr = PaddleOCR(
                 lang=self._lang,
                 use_doc_orientation_classify=False,
                 use_doc_unwarping=False,
                 use_textline_orientation=True,
-                enable_mkldnn=config.PADDLE_ENABLE_MKLDNN,
             )
 
     def read(self, image: np.ndarray) -> list[RawDetection]:
@@ -144,10 +138,7 @@ class PaddleBackend:
         try:
             from paddleocr import TextRecognition
 
-            self._rec = TextRecognition(
-                model_name=config.PADDLE_REC_MODEL_NAME,
-                enable_mkldnn=config.PADDLE_ENABLE_MKLDNN,
-            )
+            self._rec = TextRecognition(model_name=config.PADDLE_REC_MODEL_NAME)
         except Exception:
             self._rec_unavailable = True
 
@@ -379,7 +370,7 @@ def recognize_sweep(backend: OcrBackend, crop: np.ndarray) -> RecogResult:
     """Pass C：把裁剪图旋转一圈，每个角度都识别一次，取最优。
 
     「必须能吸附到合法词表」这个约束让穷举的判据非常硬——错误的角度
-    几乎不可能凑出一个合法编号，所以误报率很低。代价只是 CPU 时间，
+    几乎不可能凑出一个合法编号，所以误报率很低。代价只是算力时间，
     而建索引是一次性的。
     """
     best = _NO_RESULT

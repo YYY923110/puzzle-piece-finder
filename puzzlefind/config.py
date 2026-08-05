@@ -41,14 +41,10 @@ CROP_PADDING: int = 6
 CROP_TARGET_LONG_EDGE: int = 512
 # 碎片外区域填充成什么颜色（BGR）。中性灰避免与浅灰文字/白底冲突
 CROP_FILL_COLOR: tuple[int, int, int] = (128, 128, 128)
-# 填充掩膜前「补缝」用的闭运算核尺寸，取碎片包围盒长边的这个比例。
-# 深色印刷字符低于 Otsu 阈值，在掩膜上是洞；字符离碎片凹口够近时，
-# 形态学运算会把洞和背景连通，外轮廓便从凹口钻进碎片内部绕字符一圈，
-# 填灰时正好抹掉半个编号。实测 IMG_20260805_082927.jpg 的 D-797 被读成
-# D-79，吸附成 D-079 后被离群规则剔除。
-# 注：这里曾有一个 CROP_MASK_SEAL_RATIO（用闭运算补轮廓上的缝）。
-# 2026-08-04 实测证明那条路走不通，已删除，理由记在 crop_piece 的
-# docstring 与 docs/tuning-log.md 里。别再加回来。
+# 注：这里曾有一个 CROP_MASK_SEAL_RATIO——用闭运算去补碎片轮廓上的那道缝。
+# 实测证明那条路走不通（缝的口子就是拼图凹口的口子，核大到够得着字符时，
+# 凹口连同深色背景一起被灌进裁剪图，识别率反而塌一半），已删除。
+# 完整理由在 segment.crop_piece 的 docstring 里。别再加回来。
 
 # ---------- 识别 ----------
 # 直接识别（Pass A）置信度低于此值的碎片，进入旋转穷举（Pass C）
@@ -57,7 +53,7 @@ SWEEP_CONFIDENCE_THRESHOLD: float = 0.90
 # 穷举的角度表（度）。若方向分类器可靠，可缩短为 (0, 30, 60, 90, 120, 150)
 SWEEP_ANGLES: tuple[int, ...] = (0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330)
 # 穷举时拿到不低于此置信度的合法编号就收工，不再试剩余角度。
-# 依据 real1.jpg 实测：9 次穷举命中里 5 次置信度 ≥0.99，剩余角度是白跑的。
+# 实测依据：一轮标定里 9 次穷举命中有 5 次置信度 ≥0.99，剩余角度是白跑的。
 # 设成 0.99 而不是更低，是因为「命中合法词表」这个判据虽硬但不是绝对——
 # 留一点余量，让明显更好的读数还有机会翻盘。
 SWEEP_EARLY_EXIT_CONFIDENCE: float = 0.99
@@ -75,9 +71,6 @@ LINE_DESKEW_ROTATE_RATIO: float = 1.5
 # ---------- PaddleOCR 运行时 ----------
 # 模型下载源。国内 bos（百度自家）最快；可选 modelscope / aistudio / huggingface
 PADDLE_MODEL_SOURCE: str = "bos"
-# oneDNN(MKLDNN) 加速。**必须保持 False**：paddle 3.3.1 开着它跑 PP-OCR 检测
-# 模型会抛 ConvertPirAttribute2RuntimeAttribute 未实现。详见 recognize.py。
-PADDLE_ENABLE_MKLDNN: bool = False
 # 按行识别（跳过检测模型）用的 rec 模型名。**必须与 PaddleOCR 主管线实际
 # 选用的一致**，否则按行识别的读数会与 Pass A 系统性不一致。
 # 本机 paddleocr 3.7.0 实测主管线加载的是 PP-OCRv6_medium_rec。

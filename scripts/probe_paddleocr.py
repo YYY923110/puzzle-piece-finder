@@ -27,7 +27,6 @@ def main() -> None:
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,
         use_textline_orientation=True,
-        enable_mkldnn=False,
     )
     results = ocr.predict(make_sample())
     print(f"type(results) = {type(results)}, len = {len(results)}")
