@@ -69,7 +69,8 @@ python -m venv .venv
 三条路，引擎完全一样：
 
 ```powershell
-# 1. Web 界面上传（手机拍完直接传）
+# 1. Web 界面上传（手机上点「上传照片」会弹出「拍照 / 相册 / 文件」，
+#    现拍和相册里已有的照片都能传）
 #    注意 photo_id 取自文件名，"real4.jpg.jpg" 会得到 photo_id "real4.jpg"
 
 # 2. 命令行

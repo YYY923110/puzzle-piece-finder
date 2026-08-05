@@ -1,3 +1,5 @@
+import re
+
 import cv2
 import numpy as np
 import pytest
@@ -132,6 +134,17 @@ class TestFrontend:
         body = client.get("/").text
         assert "/api/photos" in body
 
-    def test_html_uses_camera_capture_input(self, client):
+    def test_html_accepts_images_without_forcing_the_camera(self, client):
+        """上传入口必须收图片，但**不能**锁死成现拍。
+
+        原来这里带着 capture="environment"，手机上点「上传照片」会直接
+        跳进相机，相册里已经拍好的照片根本选不了。去掉之后手机弹出
+        「拍照 / 相册 / 文件」三选一，两条路都在。
+        """
         body = client.get("/").text
-        assert 'capture="environment"' in body
+        # 只看 input 标签本身——页面上那条解释为什么不加 capture 的注释里
+        # 也有这个词，整页搜字符串会误判
+        tag = re.search(r"<input[^>]*type=\"file\"[^>]*>", body)
+        assert tag is not None, "页面里没有文件上传 input"
+        assert 'accept="image/*"' in tag.group(0)
+        assert "capture" not in tag.group(0)

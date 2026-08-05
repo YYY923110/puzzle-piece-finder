@@ -315,7 +315,10 @@ body {
     </article>
 
     <div class="rail-actions">
-      <input type="file" id="file" accept="image/*" capture="environment" hidden>
+      <!-- 不要加 capture="environment"：那会让手机直接跳进相机，
+           连相册都进不去，只能现拍。去掉之后手机会弹出「拍照 / 相册 /
+           文件」三选一，两条路都留着。 -->
+      <input type="file" id="file" accept="image/*" hidden>
       <button class="btn" id="upload">上传照片建索引</button>
     </div>
 
