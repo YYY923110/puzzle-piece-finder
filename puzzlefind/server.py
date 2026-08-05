@@ -244,6 +244,30 @@ def _local_ipv4_addresses() -> list[str]:
     return addresses
 
 
+def find_free_port(port: int, attempts: int = 20) -> int:
+    """从 port 起往上找第一个没人在听的端口。
+
+    **判据是「连得上」而不是「绑得上」，这一点是本函数存在的全部理由。**
+    Windows 允许两个进程绑同一个端口且不报错，请求会随机落到其中一个——
+    本机 8000 就是这么被另一个 python 进程悄悄分走的，排查了很久。
+    所以 bind 探测恰好测不出这个坑：绑得上不代表没人在服务。
+    改成对回环地址发起 connect，连通即说明那里已经有人在听。
+
+    连 attempts 个端口都被占则抛错。宁可停下来报错，也不要一路往上试到
+    一个你根本猜不到的端口号——手机上那个地址还得靠人念出来。
+    """
+    import socket
+
+    for candidate in range(port, port + attempts):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            if probe.connect_ex(("127.0.0.1", candidate)) != 0:
+                return candidate
+    raise RuntimeError(
+        f"{port}–{port + attempts - 1} 全都有人在听，没有可用端口"
+    )
+
+
 def run(host: str = "0.0.0.0", port: int = 8000) -> None:
     """起服务并打印局域网访问地址。"""
     import uvicorn

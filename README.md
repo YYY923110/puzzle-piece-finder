@@ -25,23 +25,34 @@
 
 ## 装好之后怎么跑
 
-依赖装在项目自带的 `.venv` 里，**没有装进 base Anaconda**（PaddleOCR 会拉进
-`opencv-contrib-python`，装进 base 会顶掉你原有的 headless OpenCV 5.0）。
-所以所有命令都要走 `.venv` 里的解释器：
+**在 VS Code 里打开 [`main.py`](main.py) 点运行**，或者：
 
 ```powershell
-cd d:\ocr_claude
-.\.venv\Scripts\python.exe -m puzzlefind.server 8791
+python main.py
 ```
+
+它自己会处理两件容易踩的事：**切到 `.venv` 里的解释器**（VS Code 选中哪个都行），
+**挑一个没人在听的端口**（默认 8791，被占就往上顺延并打印实际用的那个）。
 
 打开：
 
 - 电脑 [http://127.0.0.1:8791](http://127.0.0.1:8791)
 - 手机（同一 Wi-Fi）用它启动时打印的那个地址
 
-> **端口参数别省。** 不带参数默认 8000，而本机 8000 已被另一个 python 进程占用。
-> Windows 允许两个进程绑同一端口且不报错，请求会随机落到其中一个，很难排查。
-> 也可以用环境变量 `$env:PUZZLEFIND_PORT=8791`。
+依赖装在项目自带的 `.venv` 里，**没有装进 base Anaconda**（PaddleOCR 会拉进
+`opencv-contrib-python`，装进 base 会顶掉你原有的 headless OpenCV 5.0）。
+`main.py` 之所以要自己切解释器就是为了这个。手动起服务时也要走那个解释器：
+
+```powershell
+cd d:\Puzzle-Solver\ocr_claude
+.\.venv\Scripts\python.exe -m puzzlefind.server 8791
+```
+
+> **手动起时端口参数别省。** 不带参数默认 8000，而本机 8000 已被另一个 python
+> 进程占用。Windows 允许两个进程绑同一端口且不报错，请求会随机落到其中一个，
+> 很难排查。也可以用环境变量 `$env:PUZZLEFIND_PORT=8791`。
+> 走 `main.py` 则不必操心——它是靠「能不能连上」而不是「能不能绑上」来判断的，
+> 正好能识破这个坑。
 
 首次全新安装：
 
@@ -162,6 +173,7 @@ python -m venv .venv
 ## 项目结构
 
 ```
+main.py          一键启动（切解释器 + 挑端口 + 起服务）
 puzzlefind/
   config.py      所有可调参数集中在这里
   vocabulary.py  编号校验、归一化、混淆感知吸附、区间自举
