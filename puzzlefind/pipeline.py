@@ -36,9 +36,15 @@ def build_index(
     height, width = image.shape[:2]
     contours = segment.extract_contours(image)
 
+    # 每块碎片的裁剪图里，只把**其他**碎片涂灰，见 segment.crop_piece
     results = [
-        recognize_piece(backend, segment.crop_piece(image, contour))
-        for contour in contours
+        recognize_piece(
+            backend,
+            segment.crop_piece(
+                image, contour, contours[:index] + contours[index + 1 :]
+            ),
+        )
+        for index, contour in enumerate(contours)
     ]
     results = resolve.resolve(results)
 

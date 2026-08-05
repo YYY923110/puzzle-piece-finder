@@ -95,6 +95,26 @@ def separated_puzzle_pieces() -> tuple[np.ndarray, int]:
 
 
 @pytest.fixture
+def piece_with_code_beside_notch() -> tuple[np.ndarray, int]:
+    """一块碎片，深色编号紧挨底边凹口——掩膜上会形成一条从背景钻进内部的缝。
+
+    这是 IMG_20260805_082927.jpg 上 D-797 那一块的最小复现：印刷字符低于
+    Otsu 阈值、在掩膜上是洞，而它离凹口阴影足够近，形态学运算把洞和背景
+    连通了，外轮廓于是从凹口钻进碎片内部绕字符一圈。crop_piece 按轮廓
+    填灰时，正好把半个编号抹掉。
+
+    返回 (图像, 编号的深色像素数)。
+    """
+    canvas = make_canvas(400, 400)
+    cv2.rectangle(canvas, (100, 100), (300, 300), (235, 233, 228), thickness=-1)
+    # 底边凹口：宽 10 px，从碎片底边一直伸到「编号」下沿
+    cv2.rectangle(canvas, (195, 240), (205, 301), (20, 20, 20), thickness=-1)
+    # 「编号」：紧贴凹口顶端的深色横条
+    cv2.rectangle(canvas, (180, 225), (230, 239), (20, 20, 20), thickness=-1)
+    return canvas, 50 * 15
+
+
+@pytest.fixture
 def canvas_with_noise_speck() -> tuple[np.ndarray, int]:
     """3 块正常碎片 + 一个远小于碎片的亮点噪声。应被丢弃。"""
     canvas = make_canvas()

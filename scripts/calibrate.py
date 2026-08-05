@@ -66,7 +66,12 @@ def main() -> int:
     crops_dir = debug / "crops"
     crops_dir.mkdir(exist_ok=True)
     for i, contour in enumerate(contours[:12]):
-        cv2.imwrite(str(crops_dir / f"{i:03d}.png"), segment.crop_piece(image, contour))
+        # 与 pipeline 一致：把其他碎片当邻块涂灰
+        neighbours = contours[:i] + contours[i + 1 :]
+        cv2.imwrite(
+            str(crops_dir / f"{i:03d}.png"),
+            segment.crop_piece(image, contour, neighbours),
+        )
     print(f"[4] 前 12 块裁剪图已写入 {crops_dir}")
     print("    肉眼检查：编号是否清晰可读？有没有混进邻块的编号？")
     print("    字太小就调大 config.CROP_TARGET_LONG_EDGE，或者下次少拍几块。")

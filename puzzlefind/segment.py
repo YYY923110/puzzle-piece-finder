@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import statistics
+from collections.abc import Sequence
 
 import cv2
 import numpy as np
@@ -244,16 +245,30 @@ def contour_bbox(contour: np.ndarray) -> tuple[int, int, int, int]:
     return int(x), int(y), int(w), int(h)
 
 
-def crop_piece(bgr: np.ndarray, contour: np.ndarray) -> np.ndarray:
+def crop_piece(
+    bgr: np.ndarray,
+    contour: np.ndarray,
+    neighbours: Sequence[np.ndarray] = (),
+) -> np.ndarray:
     """裁出单块碎片并放大到识别友好的尺寸。
 
     三个动作，每个都有目的：
-    1. 用轮廓做掩膜，把邻块的像素替换成中性灰——否则相邻碎片上的
-       编号会混进这块的裁剪图，OCR 会读出两个编号。
+    1. 只把**邻块**的像素替换成中性灰——否则相邻碎片上的编号会混进
+       这块的裁剪图，OCR 会读出两个编号。碎片之间的背景原样保留：
+       裁剪图因此是一张自然照片（浅色碎片躺在深色背景上），
+       最接近 PP-OCR 的训练分布。
     2. 按包围盒裁剪并外扩少量边距，给检测器留出上下文。
     3. 放大到 CROP_TARGET_LONG_EDGE。这是整条管线里对识别率影响
        最大的一步：PP-OCR 会把文字行缩放到固定高度 48px，源图字符
        太小就等于喂给模型一张糊图。
+
+    **不要改回「按自己的轮廓填灰」**（2026-08-04 实测教训）：深色印刷
+    字符低于 Otsu 阈值，在掩膜上是洞；字符紧挨凹口时，那个洞与凹口连通，
+    外轮廓便从凹口钻进碎片内部绕字符一圈，填灰时正好抹掉半个编号——
+    IMG_20260805_082927.jpg 的 D-797 因此被读成 D-79。而想用闭运算补缝
+    是走不通的：缝的口子就是凹口的口子，核大到够得着字符时，凹口连同
+    邻域的深色背景一起被灌进裁剪图，real6 的 Pass A 命中率从 40/50
+    掉到 25/50，穷举翻倍。详见 docs/tuning-log.md。
     """
     height, width = bgr.shape[:2]
     x, y, w, h = contour_bbox(contour)
@@ -262,12 +277,21 @@ def crop_piece(bgr: np.ndarray, contour: np.ndarray) -> np.ndarray:
     x0, y0 = max(0, x - pad), max(0, y - pad)
     x1, y1 = min(width, x + w + pad), min(height, y + h + pad)
 
-    mask = np.zeros((height, width), dtype=np.uint8)
-    cv2.drawContours(mask, [contour], -1, 255, thickness=-1)
+    region = bgr[y0:y1, x0:x1]
+    if region.size == 0:
+        return region
 
-    filled = np.full_like(bgr, config.CROP_FILL_COLOR, dtype=np.uint8)
-    composited = np.where(mask[:, :, None] == 255, bgr, filled)
-    crop = composited[y0:y1, x0:x1]
+    # 掩膜只在裁剪窗口里算，开销与图像总面积无关
+    offset = np.array([x0, y0], dtype=contour.dtype)
+    blocked = np.zeros(region.shape[:2], dtype=np.uint8)
+    for other in neighbours:
+        ox, oy, ow, oh = contour_bbox(other)
+        if ox >= x1 or oy >= y1 or ox + ow <= x0 or oy + oh <= y0:
+            continue  # 与裁剪窗口不相交，跳过
+        cv2.drawContours(blocked, [other - offset], -1, 255, thickness=-1)
+
+    filled = np.full_like(region, config.CROP_FILL_COLOR, dtype=np.uint8)
+    crop = np.where(blocked[:, :, None] == 255, filled, region)
 
     if crop.size == 0:
         return crop

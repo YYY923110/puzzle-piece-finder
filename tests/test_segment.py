@@ -152,15 +152,31 @@ class TestCropPiece:
         crop = segment.crop_piece(image, contour)
         assert crop.ndim == 3 and crop.shape[2] == 3
 
-    def test_area_outside_contour_is_fill_color(self, separated_pieces):
+    def test_neighbour_pixels_are_replaced_by_fill_color(self, touching_pair):
+        """邻块必须被涂成中性灰——这是掩膜存在的唯一理由。"""
         from puzzlefind import config
 
-        image, _ = separated_pieces
+        image, _ = touching_pair
+        first, second = segment.extract_contours(image)[:2]
+        crop = segment.crop_piece(image, first, [second])
+        pixels = crop.reshape(-1, 3)
+        painted = int((pixels == np.array(config.CROP_FILL_COLOR)).all(axis=1).sum())
+        assert painted > 0
+
+    def test_own_pixels_are_never_painted_over(self, touching_pair):
+        """不传邻块时，一个像素都不许被涂灰。
+
+        这条钉死 2026-08-04 的回归：按自己的轮廓填灰会把紧挨凹口的
+        编号一起抹掉（D-797 被读成 D-79）。
+        """
+        from puzzlefind import config
+
+        image, _ = touching_pair
         contour = segment.extract_contours(image)[0]
         crop = segment.crop_piece(image, contour)
-        # 圆形碎片的裁剪图，四角必在轮廓之外
-        corner = tuple(int(v) for v in crop[2, 2])
-        assert corner == config.CROP_FILL_COLOR
+        pixels = crop.reshape(-1, 3)
+        painted = int((pixels == np.array(config.CROP_FILL_COLOR)).all(axis=1).sum())
+        assert painted == 0
 
     def test_center_preserves_original_piece_color(self, separated_pieces):
         image, _ = separated_pieces
@@ -170,6 +186,29 @@ class TestCropPiece:
         center = crop[h // 2, w // 2]
         # 合成碎片是浅色 (235,233,228)，中心应仍是浅色
         assert int(center.min()) > 180
+
+    def test_code_beside_a_notch_is_not_erased_by_the_mask(
+        self, piece_with_code_beside_notch
+    ):
+        """轮廓从凹口钻进内部时，缝隙里的编号不能被填成灰色。
+
+        实测回归：IMG_20260805_082927.jpg 的 D-797 被抹掉最后一位，
+        读成 D-79，吸附成 D-079 后被离群规则剔除，整块显示为未识别。
+        """
+        image, _ = piece_with_code_beside_notch
+        contour = segment.extract_contours(image)[0]
+        crop = segment.crop_piece(image, contour)
+        # 轮廓外一律是中性灰(128)，所以裁剪图里的深色像素只可能来自编号本身
+        dark = int((crop.reshape(-1, 3).max(axis=1) < 90).sum())
+        assert dark > 200
+
+    def test_distant_neighbours_do_not_touch_the_crop(self, separated_pieces):
+        """离得远的碎片不该影响裁剪图——只有落进裁剪窗口的才需要涂灰。"""
+        image, _ = separated_pieces
+        contours = segment.extract_contours(image)
+        alone = segment.crop_piece(image, contours[0])
+        with_far_neighbours = segment.crop_piece(image, contours[0], contours[1:])
+        assert np.array_equal(alone, with_far_neighbours)
 
     def test_contour_touching_image_edge_does_not_crash(self):
         canvas = np.full((200, 200, 3), 18, dtype=np.uint8)
