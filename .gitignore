@@ -12,6 +12,7 @@ debug/
 
 # 环境
 .venv/
+.pipcache/
 venv/
 .env
 

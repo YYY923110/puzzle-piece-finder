@@ -6,10 +6,15 @@ build-backend = "setuptools.build_meta"
 name = "puzzlefind"
 version = "0.1.0"
 requires-python = ">=3.13"
+# paddlepaddle 本体**故意不在这里**。它有 CPU 和 GPU 两个发行名
+# （paddlepaddle / paddlepaddle-gpu），装在一起会抢同一个 `paddle` 包目录。
+# 写在这里的后果实测过：GPU 版装好之后再跑一次 `pip install -e .`，
+# pip 会不声不响地把 CPU 版装回来，34 倍的提速就这么没了，而且不报错。
+# 所以改成二选一的 extra，见 README「首次全新安装」。
+# paddleocr 只依赖 paddlex，不依赖 paddlepaddle，因此这样拆是安全的。
 dependencies = [
     "opencv-python-headless>=5.0",
     "numpy>=2.0",
-    "paddlepaddle==3.3.1",
     "paddleocr>=3.0",
     "fastapi>=0.141",
     "uvicorn[standard]>=0.30",
@@ -18,6 +23,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "httpx>=0.27"]  # httpx: fastapi.testclient.TestClient 依赖它
+# CPU 版。GPU 版装不了（没显卡、驱动太旧）时用这个，代价是慢 34 倍。
+# GPU 版不能写成 extra：它只在 Paddle 自己的源上，装它必须带 -i 换源。
+cpu = ["paddlepaddle==3.3.1"]
 
 [project.scripts]
 puzzlefind = "puzzlefind.cli:main"
