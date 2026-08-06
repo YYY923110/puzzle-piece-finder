@@ -220,6 +220,35 @@ body {
 
 .rail-empty { font-size: 12px; color: var(--muted); }
 
+/* ── 未识别照片切换器 ───────────────────────────────────────── */
+/* 未命中时可能有好几张照片各自都有未识别碎片。只渲染其中一张，等于把
+   其余照片里的碎片藏起来——而"把搜索范围从几百块塌缩到个位数"正是
+   未命中路径的全部价值，看不到就等于没有。 */
+#photoSwitch { display: none; flex-direction: column; gap: 6px; }
+#photoSwitch.is-shown { display: flex; }
+
+.switch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 11px;
+  background: var(--table);
+  border: 1px solid var(--ridge);
+  border-radius: 7px;
+  color: var(--chipboard);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
+}
+.switch-btn:hover { background: #363029; }
+.switch-btn:focus-visible { outline: 2px solid var(--unknown); outline-offset: 2px; }
+.switch-btn.is-active { border-color: var(--unknown); background: #363029; }
+.switch-name { font-family: var(--mono); font-size: 13px; word-break: break-all; }
+.switch-count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.switch-btn.is-active .switch-count { color: var(--unknown); }
+
 /* ── 取景器 ─────────────────────────────────────────────────── */
 .stage { position: relative; overflow: hidden; background: #0b0a09; }
 
@@ -307,6 +336,8 @@ body {
 
     <p id="status">还没有照片。先上传一张摊开碎片的照片，建好索引后就能按编号查了。</p>
 
+    <div id="photoSwitch"></div>
+
     <article class="piece-card" id="card">
       <p class="piece-code" id="cardCode">—</p>
       <p class="piece-where" id="cardWhere"></p>
@@ -360,6 +391,55 @@ let lastPiece = null;   // 最近一次命中的碎片，"居中到碎片" 用
 function say(text, kind) {
   statusEl.textContent = text;
   statusEl.className = kind ? "is-" + kind : "";
+}
+
+/* ── 未识别照片切换器 ───────────────────────────────────────────
+   未命中时每张有未识别碎片的照片给一个按钮。曾经这里只渲染第一张，
+   其余照片仅在状态栏里被提一句名字——用户读得到"另一张还有 2 块"，
+   却永远看不到那张图，也就没法去桌上核对。 */
+const photoSwitch = $("photoSwitch");
+
+function clearPhotoSwitch() {
+  photoSwitch.replaceChildren();
+  photoSwitch.classList.remove("is-shown");
+}
+
+function buildPhotoSwitch(code, entries) {
+  photoSwitch.replaceChildren();
+  entries.forEach(([photoId, ids], i) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "switch-btn";
+
+    // photo_id 来自上传的文件名，是用户可控的字符串，只能用 textContent
+    const name = document.createElement("span");
+    name.className = "switch-name";
+    name.textContent = photoId;
+    const count = document.createElement("span");
+    count.className = "switch-count";
+    count.textContent = `${ids.length} 块未识别`;
+
+    button.append(name, count);
+    button.onclick = () => showUnrecognized(code, entries, i);
+    photoSwitch.appendChild(button);
+  });
+  photoSwitch.classList.add("is-shown");
+}
+
+function showUnrecognized(code, entries, index) {
+  const [photoId, ids] = entries[index];
+  viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}`
+             + `&photo_id=${encodeURIComponent(photoId)}&t=${Date.now()}`;
+  [...photoSwitch.children].forEach((button, i) =>
+    button.classList.toggle("is-active", i === index));
+
+  const total = entries.reduce((sum, [, ids]) => sum + ids.length, 0);
+  say(`没认出 ${code}。当前显示照片 ${photoId} 的 ${ids.length} 块未识别碎片`
+    + `（青色圈出），大概率就在其中。`
+    + (entries.length > 1
+        ? `另外 ${entries.length - 1} 张照片也有未识别碎片，共 ${total} 块，`
+          + `点上面的按钮逐张看。`
+        : ""), "miss");
 }
 
 function applyTransform() {
@@ -498,6 +578,8 @@ async function refreshPhotos() {
 async function removePhoto(photoId) {
   await fetch(`/api/photos/${encodeURIComponent(photoId)}`, { method: "DELETE" });
   await refreshPhotos();
+  // 切换按钮指向的照片可能刚被删掉，点下去只会 404
+  clearPhotoSwitch();
   say(`已删除 ${photoId} 的索引。`);
 }
 
@@ -544,6 +626,7 @@ async function find() {
   }
 
   const stamp = Date.now();
+  clearPhotoSwitch();   // 上一次未命中留下的按钮不能跟着这次结果走
 
   if (result.found) {
     lastPiece = result.piece;
@@ -568,12 +651,8 @@ async function find() {
     return;
   }
 
-  const [photoId, ids] = entries[0];
-  viewEl.src = `/api/highlight?code=${encodeURIComponent(code)}`
-             + `&photo_id=${encodeURIComponent(photoId)}&t=${stamp}`;
-  const others = entries.slice(1).map(([id, list]) => `${id} 有 ${list.length} 块`).join("，");
-  say(`没认出 ${code}。照片 ${photoId} 里这 ${ids.length} 块没读出编号（青色圈出），`
-    + `大概率就在其中。` + (others ? ` 另外：${others}。` : ""), "miss");
+  buildPhotoSwitch(code, entries);
+  showUnrecognized(code, entries, 0);
 }
 
 $("find").onclick = find;
