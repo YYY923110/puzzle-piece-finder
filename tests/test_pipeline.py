@@ -53,7 +53,7 @@ def photo_path(tmp_path, separated_pieces):
 class TestBuildIndex:
     def test_creates_one_piece_per_contour(self, photo_path, separated_pieces):
         _, expected = separated_pieces
-        backend = PieceBackend([f"B-{i:03d}" for i in range(expected)])
+        backend = PieceBackend([f"B-{261 + i}" for i in range(expected)])
         index = pipeline.build_index(photo_path, backend)
         assert len(index.pieces) == expected
 
@@ -71,15 +71,15 @@ class TestBuildIndex:
 
     def test_recognized_codes_land_on_pieces(self, photo_path, separated_pieces):
         _, count = separated_pieces
-        backend = PieceBackend([f"B-{i:03d}" for i in range(count)])
+        backend = PieceBackend([f"B-{261 + i}" for i in range(count)])
         index = pipeline.build_index(photo_path, backend)
         assert sorted(p.code for p in index.recognized) == sorted(
-            f"B-{i:03d}" for i in range(count)
+            f"B-{261 + i}" for i in range(count)
         )
 
     def test_unreadable_pieces_become_unrecognized(self, photo_path, separated_pieces):
         _, count = separated_pieces
-        codes: list[str | None] = [f"B-{i:03d}" for i in range(count - 2)] + [None, None]
+        codes: list[str | None] = [f"B-{261 + i}" for i in range(count - 2)] + [None, None]
         backend = PieceBackend(codes)
         index = pipeline.build_index(photo_path, backend)
         assert len(index.unrecognized) == 2

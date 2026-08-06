@@ -32,7 +32,7 @@ def make_index(photo_id: str, codes: list[str | None]) -> PhotoIndex:
 @pytest.fixture
 def library(tmp_path) -> Library:
     lib = Library(index_dir=tmp_path)
-    lib.save_photo(make_index("p1", ["A-001", "A-002", None]))
+    lib.save_photo(make_index("p1", ["A-1", "A-2", None]))
     lib.save_photo(make_index("p2", ["B-403", None, None]))
     return lib
 
@@ -48,10 +48,10 @@ class TestPersistence:
         assert photo.find("B-403") is not None
 
     def test_saving_same_id_twice_replaces_not_duplicates(self, library, tmp_path):
-        library.save_photo(make_index("p1", ["A-999"]))
+        library.save_photo(make_index("p1", ["A-259"]))
         reloaded = Library.load(tmp_path)
         assert len([p for p in reloaded.photos if p.photo_id == "p1"]) == 1
-        assert reloaded.query("A-999").found is True
+        assert reloaded.query("A-259").found is True
 
     def test_load_from_empty_dir_yields_empty_library(self, tmp_path):
         assert Library.load(tmp_path / "fresh").photos == []
@@ -66,10 +66,10 @@ class TestPersistence:
 
 class TestQuery:
     def test_finds_code_in_first_photo(self, library):
-        result = library.query("A-002")
+        result = library.query("A-2")
         assert result.found is True
         assert result.photo_id == "p1"
-        assert result.piece.code == "A-002"
+        assert result.piece.code == "A-2"
 
     def test_finds_code_in_second_photo(self, library):
         result = library.query("B-403")
@@ -78,6 +78,16 @@ class TestQuery:
 
     def test_query_is_case_and_space_insensitive(self, library):
         assert library.query("  b-403 ").found is True
+
+    def test_query_accepts_the_zero_padded_form(self, library):
+        """碎片上印的是 A-1，但补零写法是人手输入时最自然的一种。
+        查询走和 OCR 读数同一套归一化，两种写法都该命中同一块。
+        """
+        assert library.query("A-001").found is True
+        assert library.query("A-001").piece.code == "A-1"
+
+    def test_query_accepts_a_missing_hyphen(self, library):
+        assert library.query("b403").found is True
 
     def test_miss_reports_not_found(self, library):
         assert library.query("D-777").found is False
@@ -89,11 +99,11 @@ class TestQuery:
 
     def test_miss_omits_photos_with_no_unrecognized_pieces(self, tmp_path):
         lib = Library(index_dir=tmp_path)
-        lib.save_photo(make_index("full", ["A-001"]))
+        lib.save_photo(make_index("full", ["A-1"]))
         assert lib.query("Z-999").unrecognized == {}
 
     def test_hit_carries_no_unrecognized_payload(self, library):
-        assert library.query("A-002").unrecognized == {}
+        assert library.query("A-2").unrecognized == {}
 
     def test_malformed_query_is_a_miss_not_a_crash(self, library):
         assert library.query("!!!").found is False

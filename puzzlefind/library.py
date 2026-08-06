@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import config
+from . import config, vocabulary
 from .models import Piece, PhotoIndex
 
 
@@ -71,7 +71,9 @@ class Library:
         return True
 
     def query(self, code: str) -> QueryResult:
-        target = code.strip().upper()
+        # 走和 OCR 读数同一套归一化，否则人手输入的 A-001 / b403 找不到
+        # 索引里的 A-1 / B-403——碎片上印的是不补零的形式。
+        target = vocabulary.normalize_ocr_text(code)
         for photo in self._photos.values():
             piece = photo.find(target)
             if piece is not None:

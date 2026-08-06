@@ -1,13 +1,20 @@
-"""编号词表：校验、归一化、混淆感知吸附、区间自举。
+"""编号词表：校验、归一化、混淆感知吸附。
 
-词表是 {A,B,C,D} × 000..999 共 4000 个候选。各字母组的实际区间未知，
-由 bootstrap_ranges 从识别结果自举。
+词表是 1000 个编号，四段区间实测确定（见 config.CODE_RANGES），
+与拼图块数一一对应。**区间互不重叠，所以数字唯一确定前缀**——
+前缀不携带信息，它是一位校验码。这条性质贯穿本模块：
+
+- `is_valid_code` 同时校验格式与区间，A-403 这类前缀/数字矛盾的读数当场出局；
+- `snap` 因此能把前缀误读纠正回来（旧词表里这是一个拦不住的洞）。
+
+碎片上**不补零**（A-1 / A-42 / D-1000），所以编号长度在 3–6 之间浮动。
+这让漏读一位数字和读错前缀常常等距，`snap` 用不对称的增删代价和一条
+歧义判据来处理，两者都在 config 里带着实测依据。
 """
 from __future__ import annotations
 
 import re
-import statistics
-from collections import defaultdict
+from functools import lru_cache
 
 from . import config
 
@@ -35,189 +42,158 @@ def _substitution_cost(a: str, b: str) -> float:
     return 1.0
 
 
+@lru_cache(maxsize=1)
+def all_codes() -> tuple[str, ...]:
+    """全部 1000 个合法编号，按区间顺序。"""
+    return tuple(
+        f"{prefix}-{number}"
+        for prefix, (low, high) in config.CODE_RANGES.items()
+        for number in range(low, high + 1)
+    )
+
+
+def prefix_for_number(number: int) -> str | None:
+    """数字所属的字母组；不在 1–1000 内则为 None。"""
+    for prefix, (low, high) in config.CODE_RANGES.items():
+        if low <= number <= high:
+            return prefix
+    return None
+
+
 def is_valid_code(code: str) -> bool:
-    """是否是格式合法的编号（形如 B-403）。"""
-    return bool(config.CODE_PATTERN.match(code))
+    """是否是**真实存在**的编号——格式合法**且**数字落在该前缀的区间内。
+
+    这比旧版的纯格式校验强一档：A-403 格式没问题，但 403 属于 B 段，
+    所以它不是编号，只可能是一次前缀误读。
+    """
+    match = config.CODE_PATTERN.match(code)
+    if match is None:
+        return False
+    prefix, digits = match.groups()
+    low, high = config.CODE_RANGES[prefix]
+    return low <= int(digits) <= high
 
 
 def normalize_ocr_text(raw: str) -> str:
-    """把 OCR 原始输出整理成规范形状，尽量凑成 `X-NNN`。
+    """把 OCR 原始输出整理成规范形状，尽量凑成 `X-N`。
 
-    做四件事：去空白、转大写、统一各种破折号为 ASCII 连字符、
-    在「单字母 + 三位数字」之间补上缺失的连字符。
+    做五件事：去空白、转大写、统一各种破折号为 ASCII 连字符、
+    在「单字符 + 1–4 位数字」之间补上缺失的连字符、去掉数字段的前导零。
     不做形近字符替换——那是 snap 的职责。
+
+    补连字符时**不要求首字符是字母**：OCR 把 B 读成 8 时吐出的是 `8403`，
+    限定成字母就把这条救援路径堵死了。
+    去前导零是因为碎片上印的是不补零的形式，而人手查询和 OCR 都可能补零。
     """
     text = raw.strip().upper()
     for dash in _DASH_CHARS:
         text = text.replace(dash, "-")
     text = re.sub(r"\s+", "", text)
-    # 补连字符：开头一个非连字符字符，紧跟三个非连字符字符
-    if "-" not in text and len(text) == 4:
-        text = f"{text[0]}-{text[1:]}"
+
+    match = re.fullmatch(r"(.)(\d{1,4})", text)
+    if match:
+        text = f"{match.group(1)}-{match.group(2)}"
+
+    match = re.fullmatch(r"(.)-0*(\d+)", text)
+    if match:
+        text = f"{match.group(1)}-{match.group(2)}"
     return text
 
 
-def confusion_distance(a: str, b: str) -> float:
-    """带形近字符折扣的编辑距离（Levenshtein 变体）。"""
-    m, n = len(a), len(b)
-    prev = [float(j) for j in range(n + 1)]
+def confusion_distance(text: str, candidate: str) -> float:
+    """带形近字符折扣的编辑距离（Levenshtein 变体）。
+
+    **参数不对称，顺序有意义**：`text` 是观测到的读数，`candidate` 是
+    假设的真值。于是两种长度差对应两种不同的 OCR 失误：
+
+    - candidate 更长 → OCR **漏读**了字符，代价 SNAP_DROPPED_CHAR_COST；
+    - candidate 更短 → OCR **凭空多读**出字符，代价 SNAP_SPURIOUS_CHAR_COST。
+
+    多读比漏读贵，依据是实测：真实照片里的失败读数 D-97 / D-89 / D-83
+    全是漏读，没有一例是多读。理由与代价值都记在 config 里。
+    """
+    if len(text) == len(candidate):
+        # 等长时最优对齐必为纯替换：一次替换最多 1.0，而一增一删至少
+        # 是 DROPPED + SPURIOUS = 2.5。省掉整个 DP 表。
+        return sum(_substitution_cost(a, b) for a, b in zip(text, candidate))
+
+    spurious = config.SNAP_SPURIOUS_CHAR_COST
+    dropped = config.SNAP_DROPPED_CHAR_COST
+    m, n = len(text), len(candidate)
+    prev = [j * dropped for j in range(n + 1)]
     for i in range(1, m + 1):
-        cur = [float(i)] + [0.0] * n
+        cur = [i * spurious] + [0.0] * n
         for j in range(1, n + 1):
             cur[j] = min(
-                prev[j] + 1.0,                                  # 删除
-                cur[j - 1] + 1.0,                               # 插入
-                prev[j - 1] + _substitution_cost(a[i - 1], b[j - 1]),  # 替换
+                prev[j] + spurious,                                     # 多读
+                cur[j - 1] + dropped,                                   # 漏读
+                prev[j - 1] + _substitution_cost(text[i - 1], candidate[j - 1]),
             )
         prev = cur
     return prev[n]
 
 
-_CODE_LENGTH = 5  # "X-NNN"
-_DIGITS = "0123456789"
+_CANDIDATE_LENGTHS = frozenset(len(code) for code in all_codes())
 
 
-def _iter_vocabulary():
-    for prefix in config.VALID_PREFIXES:
-        for number in range(config.MIN_NUMBER, config.MAX_NUMBER + 1):
-            yield f"{prefix}-{number:03d}"
+def _length_cost(text_length: int, candidate_length: int) -> float:
+    """仅由长度差决定的距离下界——不看内容就能算，用来剪枝。"""
+    if candidate_length >= text_length:
+        return (candidate_length - text_length) * config.SNAP_DROPPED_CHAR_COST
+    return (text_length - candidate_length) * config.SNAP_SPURIOUS_CHAR_COST
 
 
-def _snap_aligned(text: str) -> tuple[str, float]:
-    """长度恰为 5 时的快速路径：34 次比较取代 4000 次完整 DP。
+def _budget(code: str, cap: float) -> float:
+    """某个候选能接受的最大距离：按它的**数字位数**缩放，再受绝对上限约束。
 
-    为什么这是精确的（不是近似）：两个等长字符串之间，一次替换的代价
-    最多 1.0，而一次删除加一次插入固定是 2.0，所以最优对齐一定是纯替换。
-    于是总距离等于逐位替换代价之和；而候选空间里前缀和三位数字可以
-    任意组合，所以逐位取最小值之和就是全局最小值。
-
-    这条路径覆盖绝大多数调用——Pass C 每块碎片跑 12 个角度，
-    全量扫描会让建索引凭空多花一两分钟。
+    理由见 config.SNAP_DISTANCE_PER_DIGIT：五字符编号的 2.0 预算换到
+    三字符的 A-1 上就是「三个字符里错两个也认」，那是在制造假阳性。
     """
-    prefix, total = min(
-        ((p, _substitution_cost(text[0], p)) for p in config.VALID_PREFIXES),
-        key=lambda item: item[1],
-    )
-    total += _substitution_cost(text[1], "-")
-
-    digits: list[str] = []
-    for char in text[2:5]:
-        digit, cost = min(
-            ((d, _substitution_cost(char, d)) for d in _DIGITS),
-            key=lambda item: item[1],
-        )
-        digits.append(digit)
-        total += cost
-    return f"{prefix}-{''.join(digits)}", total
-
-
-def _snap_exhaustive(text: str) -> tuple[str | None, float]:
-    """全量扫描 4000 个候选。仅用于长度不等于 5 的少数情况。"""
-    best_code: str | None = None
-    best_distance = float("inf")
-    for candidate in _iter_vocabulary():
-        distance = confusion_distance(text, candidate)
-        if distance < best_distance:
-            best_distance, best_code = distance, candidate
-            if distance == 0.0:
-                break
-    return best_code, best_distance
+    digits = len(code) - 2  # 去掉前缀字符和连字符
+    return min(cap, digits * config.SNAP_DISTANCE_PER_DIGIT)
 
 
 def snap(raw: str, max_distance: float | None = None) -> tuple[str | None, float]:
     """把 OCR 输出吸附到最近的合法编号。
 
-    返回 (编号, 距离)。距离超过 max_distance 时返回 (None, 距离)。
+    返回 (编号, 距离)。三种情况会返回 (None, 距离)：距离超出该候选的预算、
+    最优与次优拉不开差距（歧义），以及长度差得太离谱。
+
+    **歧义时宁可不答。** 不补零的编号里，「漏读一位数字」和「读错前缀」
+    经常等距：D-97 补成 D-970…D-979 全都说得通。猜错会占掉一个真编号，
+    而查不到时系统本来就会把未识别碎片全部高亮出来（见 design.md §7），
+    留空的代价小得多。
     """
-    if max_distance is None:
-        max_distance = config.SNAP_MAX_DISTANCE
+    cap = config.SNAP_MAX_DISTANCE if max_distance is None else max_distance
+    margin = config.SNAP_AMBIGUITY_MARGIN
 
     text = normalize_ocr_text(raw)
-    if is_valid_code(text):
-        return text, 0.0
     if not text:
         return None, float("inf")
+    if is_valid_code(text):
+        return text, 0.0
 
-    # 剪枝：合法编号长度恒为 5，每次增删代价 1.0，所以长度差本身
-    # 就是编辑距离的下界。差得太多时连算都不必算。
-    length_gap = abs(len(text) - _CODE_LENGTH)
-    if length_gap > max_distance:
-        return None, float(length_gap)
+    # 长度剪枝：和任何候选都差太多时，连扫都不必扫。
+    # 用 cap + margin 而不是 cap，这样被剪掉的候选一定也够不上「次优」。
+    floor = min(_length_cost(len(text), n) for n in _CANDIDATE_LENGTHS)
+    if floor > cap + margin:
+        return None, floor
 
-    if len(text) == _CODE_LENGTH:
-        best_code, best_distance = _snap_aligned(text)
-    else:
-        best_code, best_distance = _snap_exhaustive(text)
-
-    if best_distance > max_distance:
-        return None, best_distance
-    return best_code, best_distance
-
-
-def bootstrap_ranges(
-    codes: list[str], min_samples: int = 2
-) -> dict[str, tuple[int, int]]:
-    """从已识别的编号自举出每个字母组的实际数字区间。
-
-    样本数不足 min_samples 的字母组不产出区间——样本太少时
-    推出来的区间会过窄，反而把正确结果误判为离群值。
-
-    默认门槛只有 2：单个样本推不出区间（min==max，会把该组其他所有
-    编号都判成离群），两个就够画出一条线段了。真正防止「区间过窄」的
-    是 robust_ranges 的四分位围栏，不是这个门槛。
-    """
-    buckets: dict[str, list[int]] = defaultdict(list)
-    for code in codes:
-        if is_valid_code(code):
-            buckets[code[0]].append(int(code[2:]))
-    return {
-        prefix: (min(nums), max(nums))
-        for prefix, nums in buckets.items()
-        if len(nums) >= min_samples
-    }
-
-
-def robust_ranges(
-    codes: list[str], min_samples: int = 4, k: float = 1.5
-) -> dict[str, tuple[int, int]]:
-    """自举区间的稳健版本：先用四分位距围栏剔掉极端值，再取剩余值的 min/max。
-
-    为什么不能直接用 bootstrap_ranges 来找离群值：那个区间是从**同一批
-    数据**里取 min/max 得来的，所以离群值永远是它自己的边界，永远落在
-    区间内，永远抓不到。B 组读出 262/300/350/400/901 时，
-    bootstrap_ranges 给出 (262, 901)，于是 901 完全合法。
-
-    改法是先画一道围栏：低于 Q1 - k·IQR 或高于 Q3 + k·IQR 的值不参与
-    定义区间。上例中围栏是 (150, 550)，901 被挡在外面，区间收成
-    (262, 400)，901 这才暴露成离群值。
-
-    样本数不足 min_samples 的字母组不产出区间。四分位数在四个点以下
-    没有意义，硬算只会把正常值判成离群。
-    """
-    buckets: dict[str, list[int]] = defaultdict(list)
-    for code in codes:
-        if is_valid_code(code):
-            buckets[code[0]].append(int(code[2:]))
-
-    ranges: dict[str, tuple[int, int]] = {}
-    for prefix, numbers in buckets.items():
-        if len(numbers) < min_samples:
+    best_code: str | None = None
+    best = runner_up = float("inf")
+    for candidate in all_codes():
+        if _length_cost(len(text), len(candidate)) > cap + margin:
             continue
-        q1, _, q3 = statistics.quantiles(numbers, n=4, method="inclusive")
-        spread = q3 - q1
-        low_fence, high_fence = q1 - k * spread, q3 + k * spread
-        kept = [n for n in numbers if low_fence <= n <= high_fence]
-        if kept:
-            ranges[prefix] = (min(kept), max(kept))
-    return ranges
+        distance = confusion_distance(text, candidate)
+        if distance < best:
+            best, runner_up, best_code = distance, best, candidate
+        elif distance < runner_up:
+            runner_up = distance
 
-
-def is_outlier(code: str, ranges: dict[str, tuple[int, int]]) -> bool:
-    """编号是否落在自举出的区间之外。未知字母组一律不算离群。"""
-    if not is_valid_code(code):
-        return False
-    prefix = code[0]
-    if prefix not in ranges:
-        return False
-    low, high = ranges[prefix]
-    return not (low <= int(code[2:]) <= high)
+    if best_code is None:
+        return None, float("inf")
+    if runner_up - best < margin:
+        return None, best
+    if best > _budget(best_code, cap):
+        return None, best
+    return best_code, best

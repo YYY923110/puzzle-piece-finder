@@ -98,9 +98,9 @@ class TestThumbnail:
             contour=[[0, 0], [0, 30], [30, 30], [30, 0]],
             bbox=(0, 0, 30, 30),
             area=900.0,
-            code="A-001",
+            code="A-1",
             confidence=0.9,
-            raw_text="A-001",
+            raw_text="A-1",
             method="direct",
             angle=0,
         )

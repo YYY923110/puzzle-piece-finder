@@ -17,7 +17,7 @@ class CountingBackend:
 
     def read(self, image: np.ndarray) -> list[RawDetection]:
         self.n += 1
-        return [RawDetection(f"B-{self.n:03d}", 0.99)]
+        return [RawDetection(f"B-{260 + self.n}", 0.99)]
 
 
 @pytest.fixture
@@ -64,7 +64,7 @@ class TestUpload:
 class TestQuery:
     def test_hit_returns_piece_geometry(self, client, photo_bytes):
         client.post("/api/photos", files={"file": ("shot.jpg", photo_bytes, "image/jpeg")})
-        body = client.get("/api/query", params={"code": "B-001"}).json()
+        body = client.get("/api/query", params={"code": "B-261"}).json()
         assert body["found"] is True
         assert "bbox" in body["piece"]
         assert body["photo_id"]
@@ -76,14 +76,14 @@ class TestQuery:
         assert "unrecognized" in body
 
     def test_query_without_any_photo_is_a_clean_miss(self, client):
-        body = client.get("/api/query", params={"code": "B-001"}).json()
+        body = client.get("/api/query", params={"code": "B-261"}).json()
         assert body["found"] is False
 
 
 class TestHighlight:
     def test_returns_png_for_a_hit(self, client, photo_bytes):
         client.post("/api/photos", files={"file": ("shot.jpg", photo_bytes, "image/jpeg")})
-        response = client.get("/api/highlight", params={"code": "B-001"})
+        response = client.get("/api/highlight", params={"code": "B-261"})
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
 
@@ -96,7 +96,7 @@ class TestHighlight:
 
     def test_unknown_photo_id_returns_404(self, client):
         response = client.get(
-            "/api/highlight", params={"code": "B-001", "photo_id": "nope"}
+            "/api/highlight", params={"code": "B-261", "photo_id": "nope"}
         )
         assert response.status_code == 404
 
@@ -104,7 +104,7 @@ class TestHighlight:
 class TestThumbnail:
     def test_returns_png(self, client, photo_bytes):
         client.post("/api/photos", files={"file": ("shot.jpg", photo_bytes, "image/jpeg")})
-        response = client.get("/api/thumbnail", params={"code": "B-001"})
+        response = client.get("/api/thumbnail", params={"code": "B-261"})
         assert response.status_code == 200
         assert response.headers["content-type"] == "image/png"
 

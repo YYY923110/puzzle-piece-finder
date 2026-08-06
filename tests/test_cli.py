@@ -64,7 +64,7 @@ class TestIndexCommand:
 
         class NullBackend:
             def read(self, image):
-                return [RawDetection("B-001", 0.99)]
+                return [RawDetection("B-261", 0.99)]
 
         monkeypatch.setattr(cli, "_make_backend", lambda: NullBackend())
         index_dir = tmp_path / "idx"

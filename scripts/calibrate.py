@@ -102,7 +102,7 @@ def main() -> int:
     )
     print(f"\n索引已存到 {index_path}（可直接打开看每块碎片读成了什么）")
 
-    # 冲突降级的明细。这些碎片 OCR 其实读出来了，是被唯一性/离群规则否掉的，
+    # 冲突降级的明细。这些碎片 OCR 其实读出来了，是被唯一性规则否掉的，
     # 跟「压根没读出来」是完全不同的失败模式，排查方向也不同。
     demoted = [p for p in index.pieces if p.method == "conflict"]
     if demoted:
@@ -131,18 +131,22 @@ def main() -> int:
               f"{sum(1 for c in direct_confs if c < config.SWEEP_CONFIDENCE_THRESHOLD)} 块"
               f"——它们本来直接读对了，却仍被迫跑完整轮穷举。")
 
-    # 自举区间：各字母组的实际数字区间未知，只能从识别结果里反推
+    # 编号区间已确定（config.CODE_RANGES），不再自举。改报这张照片覆盖了哪一段
+    # ——碎片按区域摊开，同一张照片的编号通常挤在一起，跨度异常大就是误读的信号。
     codes = [p.code for p in index.recognized if p.code]
-    print("\n=== 自举出的编号区间 ===")
-    plain = vocabulary.bootstrap_ranges(codes)
-    fenced = vocabulary.robust_ranges(codes)
-    if not plain:
-        print("样本太少，还推不出区间。")
-    for prefix in sorted(plain):
-        low, high = plain[prefix]
-        extra = f"，围栏收紧后 {fenced[prefix]}" if prefix in fenced else ""
-        print(f"  {prefix} 组: {low:03d}–{high:03d}{extra}")
-    print("把这个区间记到 spec 的 §4 里，那条悬案就结了。")
+    print("\n=== 编号覆盖 ===")
+    if not codes:
+        print("一个编号都没读出来。")
+    for prefix, (low, high) in config.CODE_RANGES.items():
+        numbers = sorted(int(c.split("-")[1]) for c in codes if c.startswith(prefix))
+        if not numbers:
+            continue
+        print(
+            f"  {prefix} 组({low}–{high}): {len(numbers)} 块，"
+            f"实际跨 {numbers[0]}–{numbers[-1]}"
+        )
+    if len(set(c[0] for c in codes)) > 1:
+        print("  这张照片跨了多个字母组。碎片若是按区域摊开的，这多半是前缀误读。")
 
     # --- 阶段 6：可视化 ---
     cv2.imwrite(
