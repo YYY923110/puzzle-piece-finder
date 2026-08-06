@@ -589,7 +589,7 @@ $("upload").onclick = () => $("file").click();
 $("file").onchange = async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  say("正在建索引。每块碎片要转一圈识别，50 块大约十分钟，别关页面。");
+  say("正在建索引，别关页面。");
   $("upload").disabled = true;
   try {
     const form = new FormData();
