@@ -82,6 +82,11 @@ def create_app(
         # 四千万像素的 jpg 再告诉他打错了。
         if photo_id is None:
             # 没给名字时保持老行为。命令行和 curl 走这条路。
+            #
+            # 注意这里也吃掉了「给了但是空串」的情形，而且**没法区分**：
+            # FastAPI 对 Form(None) 的空字符串直接套用默认值，handler 拿到的
+            # 一律是 None。所以别指望 sanitize_photo_id 那条「名字不能为空」
+            # 在这条路上兜底——它够不着。拦住空名字的是前端。
             stem = Path(file.filename or "").stem or uuid.uuid4().hex[:8]
         else:
             try:

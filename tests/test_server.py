@@ -103,6 +103,28 @@ class TestUpload:
         listing = client.get("/api/photos").json()
         assert [p["photo_id"] for p in listing["photos"]] == ["shot"]
 
+    def test_an_empty_photo_id_counts_as_omitted_not_as_an_error(
+        self, client, photo_bytes
+    ):
+        """空的 photo_id 等同于没给，**不会**被 sanitize_photo_id 拒绝。
+
+        钉住这条是因为它看上去像一道防线，其实不是：FastAPI 对 `Form(None)`
+        的空字符串直接套用默认值，handler 拿到的是 None，和「字段压根不存在」
+        不可区分（实测过——手工构造一个带空值字段的 multipart 请求，handler
+        同样只看到 None，与客户端无关）。所以 sanitize_photo_id 里那条
+        「名字不能为空」在 HTTP 路径上永远不会被触发。
+
+        真正拦住空名字的是前端：confirmNewRegion 遇到空输入直接 return，
+        而 onchange 里的 `if (region)` 决定这个字段发不发。
+        """
+        client.post(
+            "/api/photos",
+            files={"file": ("shot.jpg", photo_bytes, "image/jpeg")},
+            data={"photo_id": ""},
+        )
+        listing = client.get("/api/photos").json()
+        assert [p["photo_id"] for p in listing["photos"]] == ["shot"]
+
 
 class TestQuery:
     def test_hit_returns_piece_geometry(self, client, photo_bytes):
@@ -191,3 +213,14 @@ class TestFrontend:
         assert tag is not None, "页面里没有文件上传 input"
         assert 'accept="image/*"' in tag.group(0)
         assert "capture" not in tag.group(0)
+
+    def test_html_asks_which_region_before_uploading(self, client):
+        """上传前必须先问「这张拍的是哪片区域」，并把答案发出去。
+
+        用户在手机上把照片改名成 1/2/3/4，但那个名字从来没进过 HTTP 请求
+        ——安卓相册交给浏览器的是一个不带显示名的句柄，浏览器用点选时刻的
+        毫秒时间戳兜底。名字只能在这里问，没法从文件名里抢救。
+        """
+        body = client.get("/").text
+        assert 'id="regionPicker"' in body
+        assert 'form.append("photo_id"' in body
