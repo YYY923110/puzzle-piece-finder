@@ -60,6 +60,49 @@ class TestUpload:
         )
         assert response.status_code == 400
 
+    def test_explicit_photo_id_wins_over_the_filename(self, client, photo_bytes):
+        """手机传上来的文件名是浏览器现造的时间戳，用户给的名字必须压过它。"""
+        client.post(
+            "/api/photos",
+            files={"file": ("1786177906346.jpg", photo_bytes, "image/jpeg")},
+            data={"photo_id": "2"},
+        )
+        listing = client.get("/api/photos").json()
+        assert [p["photo_id"] for p in listing["photos"]] == ["2"]
+
+    def test_reshooting_the_same_region_replaces_the_index(self, client, photo_bytes):
+        """重拍同一片区域必须**替换**，不是再堆一份。
+
+        这是本功能的核心断言。photo_id 不稳定时，design.md §2 承诺的
+        「重拍刷新」实际上在积累过期数据：旧索引原地留下来，而查询跨所有
+        照片扫，可能命中那份陈旧的。两次上传的文件名故意取不同，正是为了
+        证明替换只由 photo_id 决定。
+        """
+        for filename in ("shot-a.jpg", "shot-b.jpg"):
+            response = client.post(
+                "/api/photos",
+                files={"file": (filename, photo_bytes, "image/jpeg")},
+                data={"photo_id": "2"},
+            )
+            assert response.status_code == 200
+        assert len(client.get("/api/photos").json()["photos"]) == 1
+
+    def test_illegal_photo_id_is_rejected(self, client, photo_bytes):
+        response = client.post(
+            "/api/photos",
+            files={"file": ("shot.jpg", photo_bytes, "image/jpeg")},
+            data={"photo_id": "a/b"},
+        )
+        assert response.status_code == 400
+
+    def test_photo_id_may_be_omitted(self, client, photo_bytes):
+        """不给这个字段时行为与从前一致——curl 上传不受影响。"""
+        client.post(
+            "/api/photos", files={"file": ("shot.jpg", photo_bytes, "image/jpeg")}
+        )
+        listing = client.get("/api/photos").json()
+        assert [p["photo_id"] for p in listing["photos"]] == ["shot"]
+
 
 class TestQuery:
     def test_hit_returns_piece_geometry(self, client, photo_bytes):

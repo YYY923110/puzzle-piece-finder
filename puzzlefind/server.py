@@ -12,11 +12,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse, Response
 
 from . import config, render
-from .library import Library
+from .library import InvalidPhotoId, Library, sanitize_photo_id
 from .pipeline import build_index
 
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -74,14 +74,29 @@ def create_app(
         return FileResponse(_STATIC_DIR / "index.html")
 
     @app.post("/api/photos")
-    async def upload_photo(file: UploadFile = File(...)) -> dict:
+    async def upload_photo(
+        file: UploadFile = File(...),
+        photo_id: str | None = Form(None),
+    ) -> dict:
+        # 先校验名字再解码图像：名字错是用户的笔误，不必先花几十毫秒解一张
+        # 四千万像素的 jpg 再告诉他打错了。
+        if photo_id is None:
+            # 没给名字时保持老行为。命令行和 curl 走这条路。
+            stem = Path(file.filename or "").stem or uuid.uuid4().hex[:8]
+        else:
+            try:
+                stem = sanitize_photo_id(photo_id)
+            except InvalidPhotoId as error:
+                raise HTTPException(status_code=400, detail=str(error)) from error
+
         raw = await file.read()
         buffer = np.frombuffer(raw, dtype=np.uint8)
         image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
         if image is None:
             raise HTTPException(status_code=400, detail="无法解码为图像")
 
-        stem = Path(file.filename or "").stem or uuid.uuid4().hex[:8]
+        # 同名即替换：imwrite 与 save_photo 都是覆盖写，所以「重拍刷新」
+        # 不需要任何额外逻辑——它只需要一个跨重拍稳定的 photo_id。
         photo_path = resolved_photos_dir / f"{stem}.jpg"
         cv2.imwrite(str(photo_path), image)
 
