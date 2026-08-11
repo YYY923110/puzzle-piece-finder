@@ -1,6 +1,6 @@
 import pytest
 
-from puzzlefind.library import Library
+from puzzlefind.library import InvalidPhotoId, Library, sanitize_photo_id
 from puzzlefind.models import Piece, PhotoIndex
 
 
@@ -107,3 +107,60 @@ class TestQuery:
 
     def test_malformed_query_is_a_miss_not_a_crash(self, library):
         assert library.query("!!!").found is False
+
+
+class TestSanitizePhotoId:
+    """photo_id 直接当文件名用，所以它必须是一个安全的文件名。
+
+    这层保护以前是白捡的——photo_id 来自 Path(filename).stem，而 Path
+    顺手剥掉了目录分隔符（Path("../../x.jpg").stem == "x"）。改成读一个
+    自由文本字段之后那层意外的保护就没了。
+    """
+
+    def test_keeps_an_ordinary_name(self):
+        assert sanitize_photo_id("2") == "2"
+
+    def test_keeps_a_chinese_name(self):
+        assert sanitize_photo_id("左上角") == "左上角"
+
+    def test_trims_surrounding_whitespace(self):
+        assert sanitize_photo_id("  2  ") == "2"
+
+    @pytest.mark.parametrize("raw", ["", "   ", "\t"])
+    def test_empty_name_is_rejected(self, raw):
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id(raw)
+
+    @pytest.mark.parametrize(
+        "raw", ["a/b", "a\\b", "a:b", "a*b", "a?b", 'a"b', "a<b", "a>b", "a|b"]
+    )
+    def test_path_and_wildcard_characters_are_rejected(self, raw):
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id(raw)
+
+    def test_control_characters_are_rejected(self):
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id("a\x00b")
+
+    @pytest.mark.parametrize("raw", [".", ".."])
+    def test_dot_names_are_rejected(self, raw):
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id(raw)
+
+    @pytest.mark.parametrize("raw", ["con", "CON", "Com1", "LPT9", "nul", "aux"])
+    def test_windows_reserved_device_names_are_rejected(self, raw):
+        """这是 Windows 项目，data/index/CON.json 会当场炸。"""
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id(raw)
+
+    def test_a_name_at_the_length_limit_is_kept(self):
+        assert sanitize_photo_id("x" * 40) == "x" * 40
+
+    def test_an_overlong_name_is_rejected(self):
+        with pytest.raises(InvalidPhotoId):
+            sanitize_photo_id("x" * 41)
+
+    def test_the_error_message_says_why(self):
+        """错误直接透给用户看，必须说清违反了哪条。"""
+        with pytest.raises(InvalidPhotoId, match="/"):
+            sanitize_photo_id("2/3")
