@@ -220,6 +220,29 @@ body {
 
 .rail-empty { font-size: 12px; color: var(--muted); }
 
+/* ── 上传前的区域选择器 ─────────────────────────────────────── */
+/* 桌面区域是固定的，所以常态是「重拍已有的某一张」，不是「新建」。
+   四选一比在手机上打字友好得多，而按钮上直接写「重拍替换」把语义前置，
+   就不必再弹一个事后确认框。 */
+#regionPicker { display: none; flex-direction: column; gap: 6px; margin-top: 10px; }
+#regionPicker.is-shown { display: flex; }
+.picker-title { margin: 0; font-size: 12px; color: var(--muted); }
+#regionChoices { display: flex; flex-direction: column; gap: 6px; }
+.picker-new { display: flex; gap: 6px; }
+#regionName {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 11px;
+  background: var(--table);
+  border: 1px solid var(--ridge);
+  border-radius: 7px;
+  color: var(--chipboard);
+  font-family: var(--mono);
+  font-size: 13px;
+}
+#regionName:focus { outline: 2px solid var(--target); outline-offset: 1px; }
+.picker-new .btn, #regionAdd { padding: 9px 11px; font-size: 12px; }
+
 /* ── 未识别照片切换器 ───────────────────────────────────────── */
 /* 未命中时可能有好几张照片各自都有未识别碎片。只渲染其中一张，等于把
    其余照片里的碎片藏起来——而"把搜索范围从几百块塌缩到个位数"正是
@@ -351,6 +374,21 @@ body {
            文件」三选一，两条路都留着。 -->
       <input type="file" id="file" accept="image/*" hidden>
       <button class="btn" id="upload">上传照片建索引</button>
+    </div>
+
+    <!-- 上传前先问「这张拍的是哪片区域」。这里选的名字就是 photo_id，
+         选一个已有的名字即为重拍替换。名字没法从文件名里取：手机相册
+         交给浏览器的文件名是点选那一刻现造的时间戳。 -->
+    <div id="regionPicker">
+      <p class="picker-title">这张拍的是哪片区域？</p>
+      <div id="regionChoices"></div>
+      <button class="btn btn-quiet" id="regionAdd" type="button">＋ 新的区域</button>
+      <div class="picker-new" id="regionNew" hidden>
+        <input id="regionName" type="text" placeholder="比如 1" autocomplete="off"
+               maxlength="40">
+        <button class="btn" id="regionGo" type="button">确定</button>
+      </div>
+      <button class="btn btn-quiet" id="regionCancel" type="button">取消</button>
     </div>
 
     <div>
@@ -583,17 +621,96 @@ async function removePhoto(photoId) {
   say(`已删除 ${photoId} 的索引。`);
 }
 
-/* ── 上传建索引 ─────────────────────────────────────────────── */
-$("upload").onclick = () => $("file").click();
+/* ── 上传建索引 ─────────────────────────────────────────────────
+   点「上传照片」不直接拉起文件选择器，先问一句「这张拍的是哪片区域」。
+   这里选的名字就是 photo_id，也是查询结果里显示的那个名字。
+
+   为什么名字只能在这里问：用户在手机上把照片改成 1/2/3/4，但那个名字
+   从来没进过上传请求——安卓相册交给浏览器的是一个不带显示名的句柄，
+   浏览器只好用点选那一刻的毫秒时间戳兜底。文件名里没有可抢救的东西。 */
+const picker = $("regionPicker");
+let pendingRegion = null;   // 已选定、等着文件选择器返回的区域名
+
+function openPicker(names) {
+  const choices = $("regionChoices");
+  choices.replaceChildren();
+  for (const name of names) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "switch-btn";
+
+    // photo_id 是用户可控字符串，只能用 textContent
+    const label = document.createElement("span");
+    label.className = "switch-name";
+    label.textContent = name;
+    const hint = document.createElement("span");
+    hint.className = "switch-count";
+    hint.textContent = "重拍替换";
+
+    button.append(label, hint);
+    button.onclick = () => pickRegion(name);
+    choices.appendChild(button);
+  }
+
+  // 库为空时没什么可选的，直接把输入框摆出来，省掉一次点击
+  const empty = names.length === 0;
+  $("regionAdd").hidden = empty;
+  $("regionNew").hidden = !empty;
+  $("regionName").value = "";
+  picker.classList.add("is-shown");
+  if (empty) $("regionName").focus();
+}
+
+function closePicker() {
+  picker.classList.remove("is-shown");
+}
+
+function pickRegion(name) {
+  pendingRegion = name;
+  closePicker();
+  $("file").click();
+}
+
+function confirmNewRegion() {
+  const name = $("regionName").value.trim();
+  if (!name) { $("regionName").focus(); return; }
+  // 输入一个已存在的名字与点那个区域的按钮完全等价：都是替换。
+  // 不报重名——重拍本来就是常态操作。
+  pickRegion(name);
+}
+
+$("upload").onclick = async () => {
+  let names = [];
+  try {
+    const data = await (await fetch("/api/photos")).json();
+    names = data.photos.map((p) => p.photo_id);
+  } catch { /* 列表拿不到就当空库处理，仍然可以新建一个区域 */ }
+  openPicker(names);
+};
+
+$("regionAdd").onclick = () => {
+  $("regionAdd").hidden = true;
+  $("regionNew").hidden = false;
+  $("regionName").focus();
+};
+$("regionGo").onclick = confirmNewRegion;
+$("regionCancel").onclick = () => { pendingRegion = null; closePicker(); };
+$("regionName").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") confirmNewRegion();
+});
 
 $("file").onchange = async (e) => {
   const file = e.target.files[0];
-  if (!file) return;
+  const region = pendingRegion;
+  pendingRegion = null;
+  if (!file) return;   // 用户在系统选择器里点了取消
+
   say("正在建索引，别关页面。");
   $("upload").disabled = true;
   try {
     const form = new FormData();
     form.append("file", file);
+    if (region) form.append("photo_id", region);
     const response = await fetch("/api/photos", { method: "POST", body: form });
     const body = await response.json();
     if (!response.ok) throw new Error(body.detail || response.status);

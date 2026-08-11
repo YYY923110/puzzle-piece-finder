@@ -12,6 +12,47 @@ from pathlib import Path
 from . import config, vocabulary
 from .models import Piece, PhotoIndex
 
+# photo_id 直接当文件名用：data/index/{id}.json、data/photos/{id}.jpg。
+MAX_PHOTO_ID_LENGTH = 40
+_ILLEGAL_ID_CHARS = frozenset('/\\:*?"<>|')
+_RESERVED_ID_NAMES = frozenset(
+    ["CON", "PRN", "AUX", "NUL"]
+    + [f"COM{i}" for i in range(1, 10)]
+    + [f"LPT{i}" for i in range(1, 10)]
+)
+
+
+class InvalidPhotoId(ValueError):
+    """photo_id 不能安全地当文件名用。消息直接透给用户看。"""
+
+
+def sanitize_photo_id(raw: str) -> str:
+    """校验用户给的 photo_id，通过则返回去掉首尾空白的结果。
+
+    这层校验以前是白捡的：photo_id 来自 `Path(filename).stem`，而 Path
+    顺手剥掉了目录分隔符（`Path("../../x.jpg").stem == "x"`）。改成读一个
+    用户自由输入的字段之后，那层意外的保护就没了，得自己做。
+
+    **违反规则一律抛错，绝不静默改写。** 把 `2/3` 悄悄存成 `2_3` 会让用户
+    以为存成了自己输入的名字——而名字正是这个功能的全部意义，改写它等于
+    把功能悄悄做坏。
+    """
+    name = raw.strip()
+    if not name:
+        raise InvalidPhotoId("名字不能为空")
+    if len(name) > MAX_PHOTO_ID_LENGTH:
+        raise InvalidPhotoId(f"名字不能超过 {MAX_PHOTO_ID_LENGTH} 个字符")
+    if name in {".", ".."}:
+        raise InvalidPhotoId("名字不能是 . 或 ..")
+    illegal = sorted(set(name) & _ILLEGAL_ID_CHARS)
+    if illegal:
+        raise InvalidPhotoId(f"名字不能包含这些字符：{' '.join(illegal)}")
+    if any(ord(char) < 32 for char in name):
+        raise InvalidPhotoId("名字不能包含控制字符")
+    if name.upper() in _RESERVED_ID_NAMES:
+        raise InvalidPhotoId(f"{name} 是 Windows 保留的设备名，换一个")
+    return name
+
 
 @dataclass
 class QueryResult:
